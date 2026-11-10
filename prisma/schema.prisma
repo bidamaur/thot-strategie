@@ -1,0 +1,270 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma-client"
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+enum GameType {
+  CHESS
+  CHECKERS
+}
+
+enum MatchStatus {
+  WAITING
+  IN_PROGRESS
+  FINISHED
+  ABANDONED
+}
+
+enum TournamentScope {
+  NEIGHBORHOOD
+  CITY
+  COUNTRY
+  CONTINENT
+}
+
+enum TournamentStatus {
+  DRAFT
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum BalanceType {
+  FREE_POINTS
+  REAL_WALLET
+}
+
+enum BalanceTransactionType {
+  MOCK_PURCHASE
+  TOURNAMENT_ENTRY
+  TOURNAMENT_PRIZE
+  TOURNAMENT_POINTS_ENTRY
+  TOURNAMENT_POINTS_PRIZE
+}
+
+enum TournamentMatchStage {
+  MAIN
+  THIRD_PLACE
+}
+
+enum TournamentMatchStatus {
+  WAITING
+  IN_PROGRESS
+  FINISHED
+}
+
+enum TournamentInvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum MockPaymentPurpose {
+  PREMIUM_MEMBERSHIP
+}
+
+enum DraughtsVariant {
+  ENGLISH
+  INTERNATIONAL
+}
+
+model User {
+  id              String          @id @default(cuid())
+  email           String?         @unique
+  username        String          @unique
+  passwordHash    String?
+  isAdmin         Boolean         @default(false)
+  isPremium       Boolean         @default(false)
+  pointsFree      Float           @default(0)
+  walletReal      Decimal         @default(0) @db.Decimal(12, 2)
+  elo             Int             @default(1200)
+  draughtsVariant DraughtsVariant @default(INTERNATIONAL)
+  country         String?         @db.VarChar(80)
+  city            String?         @db.VarChar(80)
+  neighborhood    String?         @db.VarChar(80)
+  avatar          String?
+  createdAt       DateTime        @default(now())
+
+  whiteMatches             Match[]                 @relation("WhitePlayer")
+  blackMatches             Match[]                 @relation("BlackPlayer")
+  wonMatches               Match[]                 @relation("MatchWinner")
+  tournaments              Tournament[]            @relation("TournamentCreator")
+  aiGameRewards            AiGameReward[]
+  walletTransactions       BalanceTransaction[]
+  tournamentParticipations TournamentParticipant[]
+  tournamentMatchesAsWhite TournamentMatch[]       @relation("TournamentMatchWhite")
+  tournamentMatchesAsBlack TournamentMatch[]       @relation("TournamentMatchBlack")
+  tournamentMatchesWon     TournamentMatch[]       @relation("TournamentMatchWinner")
+  tournamentMatchesLost    TournamentMatch[]       @relation("TournamentMatchLoser")
+  tournamentInvitations    TournamentInvitation[]
+  mockPayments             MockPayment[]
+  sessions                 UserSession[]
+}
+
+model UserSession {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@index([expiresAt])
+}
+
+model Match {
+  id                   String      @id @default(cuid())
+  playerWhiteId        String
+  playerBlackId        String?
+  gameType             GameType
+  draughtsVariant      DraughtsVariant?
+  isPaid               Boolean     @default(false)
+  stakeAmount          Decimal     @default(0) @db.Decimal(12, 2)
+  status               MatchStatus @default(WAITING)
+  winnerId             String?
+  disconnectedPlayerId String?
+  disconnectedAt       DateTime?
+  whiteRemainingPieces Int?
+  blackRemainingPieces Int?
+  scoreDelta           Int?
+  timeControlMinutes   Int?
+  movesHistory         Json        @default("[]")
+  createdAt            DateTime    @default(now())
+
+  playerWhite User  @relation("WhitePlayer", fields: [playerWhiteId], references: [id], onDelete: Restrict)
+  playerBlack User? @relation("BlackPlayer", fields: [playerBlackId], references: [id], onDelete: SetNull)
+  winner      User? @relation("MatchWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([playerWhiteId])
+  @@index([playerBlackId])
+}
+
+model Tournament {
+  id             String           @id @default(cuid())
+  creatorId      String
+  scope          TournamentScope
+  isPaid         Boolean          @default(false)
+  entryFee       Decimal          @default(0) @db.Decimal(12, 2)
+  totalPrizePool Decimal          @default(0) @db.Decimal(12, 2)
+  platformFee    Decimal          @default(0) @db.Decimal(12, 2)
+  entryPoints    Int              @default(0)
+  maxPlayers     Int
+  status         TournamentStatus @default(DRAFT)
+  createdAt      DateTime         @default(now())
+
+  creator        User                    @relation("TournamentCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  participants   TournamentParticipant[]
+  bracketMatches TournamentMatch[]
+  invitations    TournamentInvitation[]
+
+  @@index([status, scope])
+  @@index([creatorId])
+}
+
+model TournamentInvitation {
+  id           String                     @id @default(cuid())
+  tournamentId String
+  userId       String
+  status       TournamentInvitationStatus @default(PENDING)
+  createdAt    DateTime                   @default(now())
+  respondedAt  DateTime?
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, userId])
+  @@index([userId, status])
+}
+
+model MockPayment {
+  id          String             @id @default(cuid())
+  userId      String
+  purpose     MockPaymentPurpose
+  amount      Decimal            @db.Decimal(12, 2)
+  referenceId String             @unique
+  createdAt   DateTime           @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+}
+
+model BalanceTransaction {
+  id              String                 @id @default(cuid())
+  userId          String
+  balanceType     BalanceType
+  transactionType BalanceTransactionType
+  amount          Decimal                @db.Decimal(14, 2)
+  referenceId     String
+  description     String
+  createdAt       DateTime               @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, transactionType, referenceId])
+  @@index([userId, createdAt])
+}
+
+model TournamentParticipant {
+  id           String   @id @default(cuid())
+  tournamentId String
+  userId       String
+  seed         Int
+  placement    Int?
+  joinedAt     DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tournamentId, userId])
+  @@unique([tournamentId, seed])
+  @@index([tournamentId, placement])
+}
+
+model TournamentMatch {
+  id            String                @id @default(cuid())
+  tournamentId  String
+  stage         TournamentMatchStage  @default(MAIN)
+  round         Int
+  matchNumber   Int
+  playerWhiteId String?
+  playerBlackId String?
+  winnerId      String?
+  loserId       String?
+  status        TournamentMatchStatus @default(WAITING)
+  createdAt     DateTime              @default(now())
+  completedAt   DateTime?
+
+  tournament  Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  playerWhite User?      @relation("TournamentMatchWhite", fields: [playerWhiteId], references: [id], onDelete: SetNull)
+  playerBlack User?      @relation("TournamentMatchBlack", fields: [playerBlackId], references: [id], onDelete: SetNull)
+  winner      User?      @relation("TournamentMatchWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+  loser       User?      @relation("TournamentMatchLoser", fields: [loserId], references: [id], onDelete: SetNull)
+
+  @@unique([tournamentId, stage, round, matchNumber])
+  @@index([tournamentId, stage, round, status])
+}
+
+model AiGameReward {
+  id         String   @id @default(cuid())
+  userId     String
+  gameId     String
+  gameType   GameType
+  difficulty String
+  points     Int
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gameId])
+  @@index([createdAt])
+}
