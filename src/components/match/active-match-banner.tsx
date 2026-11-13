@@ -46,7 +46,8 @@ export function ActiveMatchBanner() {
           return;
         }
         if (!response.ok) {
-          throw new Error("Impossible de vérifier la partie active.");
+          if (active) setLoadError(true);
+          return;
         }
         const data = (await response.json()) as {
           match?: ActiveMatchSummary | null;

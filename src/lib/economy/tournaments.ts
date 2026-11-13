@@ -1,12 +1,16 @@
 import {
   BalanceTransactionType,
   BalanceType,
+  BetStatus,
   Prisma,
   TournamentInvitationStatus,
   TournamentMatchStage,
   TournamentMatchStatus,
+  TournamentParticipantStatus,
+  TournamentType,
   TournamentScope,
   TournamentStatus,
+  TournamentWalletTransactionType,
 } from "@/generated/prisma-client";
 import { prisma } from "@/lib/prisma";
 
@@ -21,6 +25,7 @@ export class TournamentEconomyError extends Error {
       | "FULL"
       | "ALREADY_JOINED"
       | "INSUFFICIENT_FUNDS"
+      | "NOT_ELIGIBLE"
       | "INVALID_RESULT"
       | "NOT_SETTLEABLE",
   ) {
@@ -31,11 +36,29 @@ export class TournamentEconomyError extends Error {
 
 export interface CreateTournamentInput {
   creatorId: string;
+  name: string;
+  type: TournamentType;
   scope: TournamentScope;
+  gameType: "CHESS" | "CHECKERS";
+  draughtsVariant: "ENGLISH" | "INTERNATIONAL";
+  city?: string | null;
+  region?: string | null;
+  country?: string | null;
+  continent?: string | null;
   isPaid: boolean;
   entryFeeCfa: number;
   entryPoints: number;
   maxPlayers: number;
+  timeControlMinutes?: number;
+  minElo?: number;
+  maxElo?: number;
+  minPoints?: number;
+  maxPoints?: number;
+  initialCapital?: number;
+  minBet?: number;
+  maxBet?: number;
+  betMode: "FIXED" | "VARIABLE";
+  rebuyEnabled: boolean;
   invitedUserIds?: string[];
 }
 
@@ -93,6 +116,12 @@ export async function createTournament(input: CreateTournamentInput) {
       );
     }
   }
+  if (input.type === TournamentType.SURVIVAL_BANK && input.isPaid) {
+    throw new TournamentEconomyError(
+      "Le mode Survival Bank utilise uniquement des points gratuits.",
+      "INVALID_INPUT",
+    );
+  }
   if (input.isPaid) {
     assertFee(input.entryFeeCfa, "Le droit d’entrée en FCFA", 100);
     if (input.entryPoints !== 0) {
@@ -110,20 +139,32 @@ export async function createTournament(input: CreateTournamentInput) {
       );
     }
   }
+  if (input.type === TournamentType.SURVIVAL_BANK) {
+    const minBet = input.minBet ?? 1;
+    const maxBet = input.maxBet ?? input.entryPoints;
+    assertFee(minBet, "La mise minimale par match", 1);
+    assertFee(maxBet, "La mise maximale par match", 1);
+    if (minBet > maxBet || maxBet > input.entryPoints) {
+      throw new TournamentEconomyError(
+        "Les mises doivent respecter la limite minimale, la limite maximale et le capital d’entrée.",
+        "INVALID_INPUT",
+      );
+    }
+  }
 
   return retrySerializable(() =>
     prisma.$transaction(
       async (transaction) => {
         const creator = await transaction.user.findUnique({
           where: { id: input.creatorId },
-          select: { isPremium: true },
+          select: { isPremium: true, isAdmin: true },
         });
         if (!creator) {
           throw new TournamentEconomyError("Créateur introuvable.", "NOT_FOUND");
         }
-        if (!creator.isPremium) {
+        if (!creator.isPremium && !creator.isAdmin) {
           throw new TournamentEconomyError(
-            "Seuls les membres Premium peuvent créer un tournoi.",
+            "Seuls les membres Premium et les administrateurs peuvent créer un tournoi.",
             "PREMIUM_REQUIRED",
           );
         }
@@ -141,24 +182,47 @@ export async function createTournament(input: CreateTournamentInput) {
           }
         }
 
+        const type = input.type;
+        const survivalBankEnabled = type === TournamentType.SURVIVAL_BANK;
         const tournament = await transaction.tournament.create({
           data: {
+            name: input.name,
             creatorId: input.creatorId,
+            type,
             scope: input.scope,
+            city: input.city,
+            region: input.region,
+            country: input.country,
+            continent: input.continent,
             isPaid: input.isPaid,
             entryFee: new Prisma.Decimal(input.entryFeeCfa),
             entryPoints: input.entryPoints,
             maxPlayers: input.maxPlayers,
+            gameType: input.gameType,
+            draughtsVariant: input.draughtsVariant,
+            timeControlMinutes: input.timeControlMinutes,
+            minElo: input.minElo,
+            maxElo: input.maxElo,
+            minPoints: input.minPoints,
+            maxPoints: input.maxPoints,
+            initialCapital: survivalBankEnabled ? input.entryPoints : input.initialCapital,
+            minBet: survivalBankEnabled ? (input.minBet ?? 1) : input.minBet,
+            maxBet: survivalBankEnabled
+              ? (input.maxBet ?? input.entryPoints)
+              : input.maxBet,
+            betMode: input.betMode,
+            survivalBankEnabled,
+            rebuyEnabled: input.rebuyEnabled,
             status: TournamentStatus.OPEN,
           },
         });
 
-        if (input.invitedUserIds) {
-          await registerTournamentPlayerInTransaction(
-            transaction,
-            tournament.id,
-            input.creatorId,
-          );
+        await registerTournamentPlayerInTransaction(
+          transaction,
+          tournament.id,
+          input.creatorId,
+        );
+        if (input.invitedUserIds?.length) {
           await transaction.tournamentInvitation.createMany({
             data: input.invitedUserIds.map((userId) => ({
               tournamentId: tournament.id,
@@ -223,10 +287,16 @@ async function registerTournamentPlayerInTransaction(
     select: {
       id: true,
       isPaid: true,
+      type: true,
       entryFee: true,
       entryPoints: true,
       maxPlayers: true,
       status: true,
+      minElo: true,
+      maxElo: true,
+      minPoints: true,
+      maxPoints: true,
+      survivalBankEnabled: true,
       participants: { select: { userId: true, seed: true } },
     },
   });
@@ -254,10 +324,34 @@ async function registerTournamentPlayerInTransaction(
 
   const user = await transaction.user.findUnique({
     where: { id: userId },
-    select: { id: true },
+    select: { id: true, pointsFree: true, walletReal: true, elo: true },
   });
   if (!user) {
     throw new TournamentEconomyError("Profil joueur introuvable.", "NOT_FOUND");
+  }
+  if (tournament.minElo !== null && user.elo < tournament.minElo) {
+    throw new TournamentEconomyError(
+      `Votre Elo (${user.elo}) est inférieur au minimum requis (${tournament.minElo}).`,
+      "NOT_ELIGIBLE",
+    );
+  }
+  if (tournament.maxElo !== null && user.elo > tournament.maxElo) {
+    throw new TournamentEconomyError(
+      `Votre Elo (${user.elo}) dépasse le maximum autorisé (${tournament.maxElo}).`,
+      "NOT_ELIGIBLE",
+    );
+  }
+  if (tournament.minPoints !== null && user.pointsFree < tournament.minPoints) {
+    throw new TournamentEconomyError(
+      `Il faut au moins ${tournament.minPoints} points gratuits pour participer.`,
+      "NOT_ELIGIBLE",
+    );
+  }
+  if (tournament.maxPoints !== null && user.pointsFree > tournament.maxPoints) {
+    throw new TournamentEconomyError(
+      `Le maximum autorisé est de ${tournament.maxPoints} points gratuits.`,
+      "NOT_ELIGIBLE",
+    );
   }
 
   if (tournament.isPaid) {
@@ -314,6 +408,29 @@ async function registerTournamentPlayerInTransaction(
   await transaction.tournamentParticipant.create({
     data: { tournamentId, userId, seed },
   });
+  if (tournament.survivalBankEnabled) {
+    const wallet = await transaction.tournamentWallet.create({
+      data: {
+        tournamentId,
+        userId,
+        capital: tournament.entryPoints,
+        initialCapital: tournament.entryPoints,
+        status: TournamentParticipantStatus.ACTIVE,
+      },
+    });
+    await transaction.tournamentWalletTransaction.create({
+      data: {
+        walletId: wallet.id,
+        tournamentId,
+        userId,
+        type: TournamentWalletTransactionType.DEPOSIT,
+        amount: tournament.entryPoints,
+        balanceAfter: tournament.entryPoints,
+        referenceId: tournament.id,
+        description: `Droit d’entrée placé dans le portefeuille du tournoi ${tournament.id}`,
+      },
+    });
+  }
   const joinedCount = seed;
   if (joinedCount === tournament.maxPlayers) {
     const gross = tournament.entryFee.mul(tournament.maxPlayers);
@@ -493,6 +610,7 @@ async function finishTournament(
       entryPoints: true,
       maxPlayers: true,
       totalPrizePool: true,
+      type: true,
       bracketMatches: {
         where: { stage: TournamentMatchStage.MAIN },
         orderBy: [{ round: "desc" }, { matchNumber: "asc" }],
@@ -536,11 +654,58 @@ async function finishTournament(
           userId: placement.userId,
         },
       },
-      data: { placement: placement.place },
+      data: {
+        placement: placement.place,
+        status:
+          placement.place === 1
+            ? TournamentParticipantStatus.WON
+            : TournamentParticipantStatus.ELIMINATED,
+        eliminatedAt:
+          placement.place === 1 ? null : new Date(),
+      },
     });
   }
 
-  if (tournament.isPaid) {
+  if (tournament.type === TournamentType.SURVIVAL_BANK) {
+    const wallets = await transaction.tournamentWallet.findMany({
+      where: { tournamentId },
+    });
+    for (const wallet of wallets) {
+      await transaction.tournamentWallet.update({
+        where: { id: wallet.id },
+        data: {
+          ...(wallet.capital > 0 ? { capital: 0 } : {}),
+          status:
+            wallet.userId === placements[0]!.userId
+              ? TournamentParticipantStatus.WON
+              : TournamentParticipantStatus.ELIMINATED,
+        },
+      });
+      if (wallet.capital <= 0) continue;
+      const newPoints = await transaction.user.updateMany({
+        where: { id: wallet.userId },
+        data: { pointsFree: { increment: wallet.capital } },
+      });
+      if (newPoints.count !== 1) {
+        throw new TournamentEconomyError(
+          "Impossible de restituer le solde de tournoi au joueur.",
+          "NOT_FOUND",
+        );
+      }
+      await transaction.tournamentWalletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          tournamentId,
+          userId: wallet.userId,
+          type: TournamentWalletTransactionType.WITHDRAWAL,
+          amount: -wallet.capital,
+          balanceAfter: 0,
+          referenceId: `tournament-finish:${tournamentId}`,
+          description: `Restitution du solde restant à la fin du tournoi ${tournamentId}`,
+        },
+      });
+    }
+  } else if (tournament.isPaid) {
     const prizes = splitMoneyPrizePool(tournament.totalPrizePool);
     for (let index = 0; index < 3; index += 1) {
       const prize = prizes[index]!;
@@ -606,6 +771,7 @@ export async function recordValidatedTournamentResult(
             stage: true,
             round: true,
             matchNumber: true,
+            betAmount: true,
             playerWhiteId: true,
             playerBlackId: true,
             status: true,
@@ -613,6 +779,10 @@ export async function recordValidatedTournamentResult(
               select: {
                 status: true,
                 maxPlayers: true,
+                type: true,
+                minBet: true,
+                maxBet: true,
+                survivalBankEnabled: true,
               },
             },
           },
@@ -663,6 +833,191 @@ export async function recordValidatedTournamentResult(
             "Le résultat a déjà été enregistré.",
             "NOT_SETTLEABLE",
           );
+        }
+
+        if (match.tournament.survivalBankEnabled) {
+          const wallets = await transaction.tournamentWallet.findMany({
+            where: {
+              tournamentId: match.tournamentId,
+              userId: { in: [match.playerWhiteId, match.playerBlackId] },
+            },
+          });
+          const whiteWallet = wallets.find(
+            (wallet) => wallet.userId === match.playerWhiteId,
+          );
+          const blackWallet = wallets.find(
+            (wallet) => wallet.userId === match.playerBlackId,
+          );
+          if (!whiteWallet || !blackWallet) {
+            throw new TournamentEconomyError(
+              "Portefeuille de tournoi introuvable pour un joueur.",
+              "NOT_FOUND",
+            );
+          }
+
+          const stake = match.betAmount ?? match.tournament.minBet ?? 0;
+          if (match.tournament.maxBet !== null && stake > match.tournament.maxBet) {
+            throw new TournamentEconomyError(
+              "La mise du match dépasse le maximum autorisé par le tournoi.",
+              "INVALID_INPUT",
+            );
+          }
+          if (stake > 0) {
+            const [whiteDebit, blackDebit] = await Promise.all([
+              transaction.tournamentWallet.updateMany({
+                where: {
+                  id: whiteWallet.id,
+                  status: TournamentParticipantStatus.ACTIVE,
+                  capital: { gte: stake },
+                },
+                data: { capital: { decrement: stake } },
+              }),
+              transaction.tournamentWallet.updateMany({
+                where: {
+                  id: blackWallet.id,
+                  status: TournamentParticipantStatus.ACTIVE,
+                  capital: { gte: stake },
+                },
+                data: { capital: { decrement: stake } },
+              }),
+            ]);
+            if (whiteDebit.count !== 1 || blackDebit.count !== 1) {
+              throw new TournamentEconomyError(
+                `Chaque joueur doit avoir au moins ${stake} points dans son portefeuille de tournoi pour jouer.`,
+                "INSUFFICIENT_FUNDS",
+              );
+            }
+
+            const winnerWallet =
+              winnerId === whiteWallet.userId ? whiteWallet : blackWallet;
+            const loserWallet =
+              winnerId === whiteWallet.userId ? blackWallet : whiteWallet;
+            const winnerBalance = winnerWallet.capital + stake;
+            const loserBalance = loserWallet.capital - stake;
+            await transaction.tournamentWallet.update({
+              where: { id: winnerWallet.id },
+              data: {
+                capital: winnerBalance,
+                totalWon: { increment: 1 },
+                matchesPlayed: { increment: 1 },
+                matchesWon: { increment: 1 },
+                winStreak: { increment: 1 },
+              },
+            });
+            await transaction.tournamentWallet.update({
+              where: { id: loserWallet.id },
+              data: {
+                totalLost: { increment: 1 },
+                matchesPlayed: { increment: 1 },
+                matchesLost: { increment: 1 },
+                winStreak: 0,
+              },
+            });
+            await transaction.tournamentWalletTransaction.createMany({
+              data: [
+                {
+                  walletId: whiteWallet.id,
+                  tournamentId: match.tournamentId,
+                  userId: whiteWallet.userId,
+                  type: TournamentWalletTransactionType.BET_PLACED,
+                  amount: -stake,
+                  balanceAfter: whiteWallet.capital - stake,
+                  referenceId: match.id,
+                  description: `Mise du match ${match.id}`,
+                },
+                {
+                  walletId: blackWallet.id,
+                  tournamentId: match.tournamentId,
+                  userId: blackWallet.userId,
+                  type: TournamentWalletTransactionType.BET_PLACED,
+                  amount: -stake,
+                  balanceAfter: blackWallet.capital - stake,
+                  referenceId: match.id,
+                  description: `Mise du match ${match.id}`,
+                },
+                {
+                  walletId: winnerWallet.id,
+                  tournamentId: match.tournamentId,
+                  userId: winnerWallet.userId,
+                  type: TournamentWalletTransactionType.BET_WON,
+                  amount: stake * 2,
+                  balanceAfter: winnerBalance,
+                  referenceId: match.id,
+                  description: `Gain des mises du match ${match.id}`,
+                },
+                {
+                  walletId: loserWallet.id,
+                  tournamentId: match.tournamentId,
+                  userId: loserWallet.userId,
+                  type: TournamentWalletTransactionType.BET_LOST,
+                  amount: -stake,
+                  balanceAfter: loserBalance,
+                  referenceId: match.id,
+                  description: `Perte de la mise du match ${match.id}`,
+                },
+              ],
+            });
+            const now = new Date();
+            await transaction.tournamentBet.createMany({
+              data: [
+                {
+                  tournamentId: match.tournamentId,
+                  matchId: match.id,
+                  walletId: whiteWallet.id,
+                  userId: whiteWallet.userId,
+                  amount: stake,
+                  status: BetStatus.SETTLED,
+                  acceptedAt: now,
+                  settledAt: now,
+                },
+                {
+                  tournamentId: match.tournamentId,
+                  matchId: match.id,
+                  walletId: blackWallet.id,
+                  userId: blackWallet.userId,
+                  amount: stake,
+                  status: BetStatus.SETTLED,
+                  acceptedAt: now,
+                  settledAt: now,
+                },
+              ],
+            });
+            const minimumStake = match.tournament.minBet ?? 0;
+            if (loserBalance < minimumStake) {
+              await transaction.tournamentWallet.update({
+                where: { id: loserWallet.id },
+                data: {
+                  status: TournamentParticipantStatus.ELIMINATED,
+                  eliminatedAt: new Date(),
+                  eliminationReason: "Capital inférieur à la mise minimale",
+                },
+              });
+              await transaction.tournamentParticipant.updateMany({
+                where: { tournamentId: match.tournamentId, userId: loserId },
+                data: {
+                  status: TournamentParticipantStatus.ELIMINATED,
+                  eliminatedAt: new Date(),
+                },
+              });
+            }
+          } else {
+            await transaction.tournamentWallet.update({
+              where: { id: (winnerId === whiteWallet.userId ? whiteWallet : blackWallet).id },
+              data: {
+                matchesPlayed: { increment: 1 },
+                matchesWon: { increment: 1 },
+                winStreak: { increment: 1 },
+              },
+            });
+            await transaction.tournamentWallet.update({
+              where: { id: (winnerId === whiteWallet.userId ? blackWallet : whiteWallet).id },
+              data: {
+                matchesPlayed: { increment: 1 },
+                matchesLost: { increment: 1 },
+                winStreak: 0,
+              },
+            });
+          }
         }
 
         if (match.stage === TournamentMatchStage.THIRD_PLACE) {

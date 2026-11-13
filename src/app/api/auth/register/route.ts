@@ -60,6 +60,9 @@ export async function POST(request: Request) {
       select: PROFILE_SELECT,
     });
     const token = await createUserSession(user.id);
+    const secure =
+      new URL(request.url).protocol === "https:" ||
+      request.headers.get("x-forwarded-proto") === "https";
     const response = NextResponse.json(
       { user: toPublicProfile(user) },
       { status: 201 },
@@ -67,7 +70,7 @@ export async function POST(request: Request) {
     response.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure,
       path: "/",
       maxAge: SESSION_DURATION_MS / 1000,
     });

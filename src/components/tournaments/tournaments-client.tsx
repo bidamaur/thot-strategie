@@ -28,23 +28,56 @@ interface UserOption {
   neighborhood: string | null;
 }
 
+interface ProfileUser {
+  id: string;
+  username: string;
+  isAdmin: boolean;
+  isPremium: boolean;
+  pointsFree: number;
+  elo: number;
+  walletReal?: string;
+  country: string | null;
+  city: string | null;
+  neighborhood: string | null;
+}
+
 interface TournamentSummary {
   id: string;
+  name: string;
   creatorId: string;
   creator: { id: string; username: string };
   scope: string;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  continent: string | null;
+  type: string;
+  gameType: string;
   isPaid: boolean;
   entryFee: string;
   entryPoints: number;
   totalPrizePool: string;
   maxPlayers: number;
+  minElo: number | null;
+  maxElo: number | null;
+  minPoints: number | null;
+  maxPoints: number | null;
+  minBet: number | null;
+  maxBet: number | null;
   status: string;
   _count: { participants: number };
+  isParticipant: boolean;
   invitations: Array<{
     id: string;
     userId: string;
     status: "PENDING" | "ACCEPTED" | "DECLINED";
   }>;
+}
+
+interface TournamentAction {
+  tournament: TournamentSummary;
+  intent: "join" | "accept";
+  invitationId?: string;
 }
 
 async function responseJson<T>(response: Response): Promise<T> {
@@ -62,14 +95,31 @@ function formatPoints(value: number): string {
 export function TournamentsClient() {
   const [users, setUsers] = useState<UserOption[]>([]);
   const [tournaments, setTournaments] = useState<TournamentSummary[]>([]);
-  const [playerId, setPlayerId] = useState("");
+  const [currentUser, setCurrentUser] = useState<ProfileUser | null>(null);
   const [selectedInviteIds, setSelectedInviteIds] = useState<string[]>([]);
+  const [tournamentName, setTournamentName] = useState("");
+  const [tournamentType, setTournamentType] = useState("SURVIVAL_BANK");
+  const [tournamentScope, setTournamentScope] = useState("CITY");
+  const [entryPoints, setEntryPoints] = useState("1");
+  const [maxPlayers, setMaxPlayers] = useState("4");
+  const [city, setCity] = useState("");
+  const [region, setRegion] = useState("");
+  const [country, setCountry] = useState("");
+  const [continent, setContinent] = useState("");
+  const [minElo, setMinElo] = useState("");
+  const [maxElo, setMaxElo] = useState("");
+  const [minPoints, setMinPoints] = useState("");
+  const [maxPoints, setMaxPoints] = useState("");
+  const [minBet, setMinBet] = useState("");
+  const [maxBet, setMaxBet] = useState("");
+  const [tournamentAction, setTournamentAction] = useState<TournamentAction | null>(null);
+  const [dialogError, setDialogError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const currentUser = users.find((user) => user.id === playerId);
+  const playerId = currentUser?.id ?? "";
   const inviteCandidates = useMemo(
     () => users.filter((user) => user.id !== playerId),
     [playerId, users],
@@ -88,23 +138,20 @@ export function TournamentsClient() {
     ]);
     const data = await responseJson<{ users: UserOption[] }>(usersResponse);
     setUsers(data.users);
+    await loadTournaments();
     if (profileResponse.status === 401) {
-      setPlayerId("");
-      setTournaments([]);
+      setCurrentUser(null);
       return;
     }
-    const profileData = await responseJson<{ user: { id: string } }>(
-      profileResponse,
-    );
+    const profileData = await responseJson<{ user: ProfileUser }>(profileResponse);
     const selectedId = profileData.user.id;
-    setPlayerId(selectedId);
+    setCurrentUser(profileData.user);
     setSelectedInviteIds(
       data.users
         .filter((user) => user.id !== selectedId && !user.isAdmin)
         .slice(0, 3)
         .map((user) => user.id),
     );
-    await loadTournaments();
   }, [loadTournaments]);
 
   useEffect(() => {
@@ -167,8 +214,10 @@ export function TournamentsClient() {
 
   async function createFreeTournament() {
     if (!currentUser) return;
-    if (selectedInviteIds.length !== 3) {
-      setError("Sélectionnez les trois joueurs à inviter pour le tournoi de démonstration.");
+    const requiredPoints = Number(entryPoints);
+    const playerCount = Number(maxPlayers);
+    if (!Number.isSafeInteger(requiredPoints) || requiredPoints < 1) {
+      setError("Le nombre de points requis pour entrer doit être un entier positif.");
       return;
     }
     setBusy("create");
@@ -179,19 +228,35 @@ export function TournamentsClient() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          scope: "CITY",
+          name: tournamentName.trim() || undefined,
+          type: tournamentType,
+          scope: tournamentScope,
           isPaid: false,
           entryFeeCfa: 0,
-          entryPoints: 1,
-          maxPlayers: 4,
+          entryPoints: requiredPoints,
+          maxPlayers: playerCount,
+          gameType: "CHECKERS",
+          minElo: minElo ? Number(minElo) : undefined,
+          maxElo: maxElo ? Number(maxElo) : undefined,
+          minPoints: minPoints ? Number(minPoints) : undefined,
+          maxPoints: maxPoints ? Number(maxPoints) : undefined,
+          minBet: minBet ? Number(minBet) : undefined,
+          maxBet: maxBet ? Number(maxBet) : undefined,
+          city: city.trim() || undefined,
+          region: region.trim() || undefined,
+          country: country.trim() || undefined,
+          continent: continent.trim() || undefined,
           inviteUserIds: selectedInviteIds,
         }),
       });
       await responseJson<{ tournament: { id: string } }>(createResponse);
       setNotice(
-        "Tournoi gratuit créé. Vous êtes inscrit et les trois joueurs ont reçu une invitation à accepter.",
+        tournamentType === "SURVIVAL_BANK"
+          ? `Tournoi créé. ${formatPoints(requiredPoints)} points ont été débités puis placés dans le portefeuille du tournoi.`
+          : `Tournoi créé. ${formatPoints(requiredPoints)} points ont été débités pour l’inscription.`,
       );
-      await loadTournaments();
+      setTournamentName("");
+      await loadUsers();
     } catch (caughtError) {
       setError(
         caughtError instanceof Error
@@ -232,11 +297,17 @@ export function TournamentsClient() {
       await responseJson(response);
       setNotice(
         decision === "accept"
-          ? "Invitation acceptée. Un point gratuit a été placé en séquestre."
+          ? "Invitation acceptée. Le droit d’entrée est placé dans le tournoi."
           : "Invitation refusée.",
       );
+      setTournamentAction(null);
       await Promise.all([loadUsers(), loadTournaments()]);
     } catch (caughtError) {
+      setDialogError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Impossible de répondre à l’invitation.",
+      );
       setError(
         caughtError instanceof Error
           ? caughtError.message
@@ -263,14 +334,94 @@ export function TournamentsClient() {
       );
       await responseJson(response);
       setNotice("Inscription confirmée.");
+      setTournamentAction(null);
       await Promise.all([loadUsers(), loadTournaments()]);
     } catch (caughtError) {
+      setDialogError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : "Inscription impossible.",
+      );
       setError(
         caughtError instanceof Error ? caughtError.message : "Inscription impossible.",
       );
     } finally {
       setBusy("");
     }
+  }
+
+  function getJoinRestrictions(tournament: TournamentSummary): string[] {
+    const restrictions: string[] = [];
+    if (!currentUser) restrictions.push("Connectez-vous pour participer.");
+    if (tournament.status !== "OPEN") restrictions.push("Les inscriptions ne sont pas ouvertes.");
+    if (tournament.isParticipant) restrictions.push("Vous êtes déjà inscrit.");
+    if (tournament._count.participants >= tournament.maxPlayers) {
+      restrictions.push("Le tournoi a atteint sa capacité maximale.");
+    }
+    if (currentUser) {
+      if (!tournament.isPaid && currentUser.pointsFree < tournament.entryPoints) {
+        restrictions.push(
+          `Solde insuffisant : ${formatPoints(tournament.entryPoints)} points requis, vous en avez ${formatPoints(currentUser.pointsFree)}.`,
+        );
+      }
+      if (
+        tournament.minPoints !== null &&
+        currentUser.pointsFree < tournament.minPoints
+      ) {
+        restrictions.push(
+          `Solde minimum requis : ${formatPoints(tournament.minPoints)} points.`,
+        );
+      }
+      if (
+        tournament.maxPoints !== null &&
+        currentUser.pointsFree > tournament.maxPoints
+      ) {
+        restrictions.push(
+          `Solde maximum autorisé : ${formatPoints(tournament.maxPoints)} points.`,
+        );
+      }
+      if (tournament.minElo !== null && currentUser.elo < tournament.minElo) {
+        restrictions.push(`Elo minimum requis : ${tournament.minElo}.`);
+      }
+      if (tournament.maxElo !== null && currentUser.elo > tournament.maxElo) {
+        restrictions.push(`Elo maximum autorisé : ${tournament.maxElo}.`);
+      }
+    }
+    if (tournament.isPaid && currentUser && !currentUser.walletReal) {
+      restrictions.push("Un portefeuille de paiement actif est nécessaire.");
+    }
+    if (
+      tournament.isPaid &&
+      currentUser &&
+      currentUser.walletReal !== undefined &&
+      Number(currentUser.walletReal ?? 0) < Number(tournament.entryFee)
+    ) {
+      restrictions.push(
+        `Solde FCFA insuffisant : ${tournament.entryFee} FCFA requis.`,
+      );
+    }
+    return restrictions;
+  }
+
+  function openTournamentAction(action: TournamentAction) {
+    setDialogError("");
+    setTournamentAction(action);
+  }
+
+  function confirmTournamentAction() {
+    if (!tournamentAction) return;
+    if (
+      tournamentAction.intent === "accept" &&
+      tournamentAction.invitationId
+    ) {
+      void respondToInvitation(
+        tournamentAction.tournament.id,
+        tournamentAction.invitationId,
+        "accept",
+      );
+      return;
+    }
+    void joinTournament(tournamentAction.tournament);
   }
 
   return (
@@ -352,18 +503,129 @@ export function TournamentsClient() {
           </section>
         )}
 
-        {currentUser?.isAdmin && currentUser.isPremium && (
+        {currentUser?.isAdmin && (
           <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.04] p-5 sm:p-7">
             <div className="flex items-center gap-2 text-emerald-100">
               <Crown size={20} />
               <h2 className="text-lg font-semibold">Créer un tournoi gratuit</h2>
             </div>
             <p className="mt-2 text-sm leading-6 text-white/55">
-              Tournoi de quatre joueurs : vous êtes inscrit comme organisateur et
-              les trois autres profils reçoivent une invitation. Chaque joueur
-              place 1 point gratuit en séquestre ; aucune cagnotte en FCFA.
+              {tournamentType === "SURVIVAL_BANK"
+                ? "Le droit d’entrée est débité des points gratuits et conservé dans le portefeuille du tournoi. Le solde restant est restitué à la fin ; les gains et pertes de match restent dans ce portefeuille."
+                : "Le droit d’entrée est débité des points gratuits à l’inscription. Le montant collecté est redistribué aux meilleurs joueurs à la fin du tournoi."}
             </p>
-            <div className="mt-5 grid gap-2 sm:grid-cols-3">
+            <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="text-sm text-white/70">
+                Nom du tournoi
+                <input
+                  value={tournamentName}
+                  onChange={(event) => setTournamentName(event.target.value)}
+                  maxLength={100}
+                  placeholder="Ex. Coupe d’Abidjan"
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white"
+                />
+              </label>
+              <label className="text-sm text-white/70">
+                Format
+                <select
+                  value={tournamentType}
+                  onChange={(event) => setTournamentType(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-[#111814] px-3 py-2 text-white"
+                >
+                  <option value="SURVIVAL_BANK">Survival Bank</option>
+                  <option value="ELIMINATION">Élimination directe</option>
+                </select>
+              </label>
+              <label className="text-sm text-white/70">
+                Portée géographique
+                <select
+                  value={tournamentScope}
+                  onChange={(event) => setTournamentScope(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-[#111814] px-3 py-2 text-white"
+                >
+                  <option value="NEIGHBORHOOD">Quartier</option>
+                  <option value="CITY">Ville</option>
+                  <option value="REGION">Région</option>
+                  <option value="COUNTRY">Pays</option>
+                  <option value="CONTINENT">Continent</option>
+                  <option value="INTERNATIONAL">International</option>
+                </select>
+              </label>
+              <label className="text-sm text-white/70">
+                Points requis pour entrer <span className="text-rose-300">*</span>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  required
+                  value={entryPoints}
+                  onChange={(event) => setEntryPoints(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white"
+                />
+              </label>
+              <label className="text-sm text-white/70">
+                Nombre de joueurs
+                <select
+                  value={maxPlayers}
+                  onChange={(event) => setMaxPlayers(event.target.value)}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-[#111814] px-3 py-2 text-white"
+                >
+                  {[4, 8, 16, 32, 64].map((count) => (
+                    <option key={count} value={count}>{count}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm text-white/70">
+                Ville
+                <input value={city} onChange={(event) => setCity(event.target.value)} maxLength={80} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+              </label>
+              <label className="text-sm text-white/70">
+                Région
+                <input value={region} onChange={(event) => setRegion(event.target.value)} maxLength={80} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+              </label>
+              <label className="text-sm text-white/70">
+                Pays
+                <input value={country} onChange={(event) => setCountry(event.target.value)} maxLength={80} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+              </label>
+              <label className="text-sm text-white/70">
+                Continent
+                <input value={continent} onChange={(event) => setContinent(event.target.value)} maxLength={80} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+              </label>
+              <label className="text-sm text-white/70">
+                Elo minimum (optionnel)
+                <input type="number" min={0} step={1} value={minElo} onChange={(event) => setMinElo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+              </label>
+              <label className="text-sm text-white/70">
+                Elo maximum (optionnel)
+                <input type="number" min={0} step={1} value={maxElo} onChange={(event) => setMaxElo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+              </label>
+              <label className="text-sm text-white/70">
+                Solde minimum de points (optionnel)
+                <input type="number" min={0} step={1} value={minPoints} onChange={(event) => setMinPoints(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+              </label>
+              <label className="text-sm text-white/70">
+                Solde maximum de points (optionnel)
+                <input type="number" min={0} step={1} value={maxPoints} onChange={(event) => setMaxPoints(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+              </label>
+              {tournamentType === "SURVIVAL_BANK" && (
+                <>
+                  <label className="text-sm text-white/70">
+                    Mise minimale par match (optionnel)
+                    <input type="number" min={1} step={1} value={minBet} onChange={(event) => setMinBet(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+                  </label>
+                  <label className="text-sm text-white/70">
+                    Mise maximale par match (optionnel)
+                    <input type="number" min={1} step={1} value={maxBet} onChange={(event) => setMaxBet(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+                  </label>
+                </>
+              )}
+            </div>
+            <div className="mt-6">
+              <p className="mb-2 text-sm text-white/70">Inviter des joueurs (facultatif)</p>
+              <p className="mb-2 text-xs text-white/40">
+                {selectedInviteIds.length}/{Math.max(0, Number(maxPlayers) - 1)} places d’invitation sélectionnées.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {inviteCandidates.map((user) => (
                 <label
                   key={user.id}
@@ -372,6 +634,10 @@ export function TournamentsClient() {
                   <input
                     type="checkbox"
                     checked={selectedInviteIds.includes(user.id)}
+                    disabled={
+                      !selectedInviteIds.includes(user.id) &&
+                      selectedInviteIds.length >= Number(maxPlayers) - 1
+                    }
                     onChange={(event) =>
                       setSelectedInviteIds((current) =>
                         event.target.checked
@@ -379,7 +645,7 @@ export function TournamentsClient() {
                           : current.filter((id) => id !== user.id),
                       )
                     }
-                    className="size-4 accent-emerald-300"
+                    className="size-4 accent-emerald-300 disabled:opacity-40"
                   />
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{user.username}</span>
@@ -390,11 +656,15 @@ export function TournamentsClient() {
                   </span>
                 </label>
               ))}
+              </div>
             </div>
             <button
               type="button"
               onClick={() => void createFreeTournament()}
-              disabled={busy !== "" || inviteCandidates.length < 3}
+              disabled={
+                busy !== "" ||
+                selectedInviteIds.length > Number(maxPlayers) - 1
+              }
               className="mt-5 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-300 px-5 py-3 font-semibold text-[#07100c] transition hover:bg-emerald-200 disabled:opacity-50"
             >
               {busy === "create" ? (
@@ -402,7 +672,7 @@ export function TournamentsClient() {
               ) : (
                 <Send size={18} />
               )}
-              Créer et inviter les 3 joueurs
+              Créer le tournoi
             </button>
           </section>
         )}
@@ -447,12 +717,12 @@ export function TournamentsClient() {
             </div>
           ) : tournaments.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-white/15 p-8 text-center text-sm text-white/45">
-              Aucun tournoi. Le profil administrateur doit activer Premium pour en créer un.
+              Aucun tournoi pour le moment. Les tournois créés apparaîtront ici.
             </div>
           ) : (
             <div className="grid gap-4">
               {tournaments.map((tournament) => {
-                const invitation = tournament.invitations.find(
+                const invitation = tournament.invitations?.find(
                   (item) => item.userId === currentUser?.id,
                 );
                 const joined = tournament._count.participants;
@@ -473,7 +743,7 @@ export function TournamentsClient() {
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold">
-                            Tournoi de {tournament.creator.username}
+                            {tournament.name || `Tournoi de ${tournament.creator.username}`}
                           </h3>
                           <span className="rounded-full bg-emerald-200/10 px-2.5 py-1 text-xs text-emerald-100">
                             {statusLabel}
@@ -490,8 +760,25 @@ export function TournamentsClient() {
                           </span>
                           <span className="inline-flex items-center gap-1">
                             <MapPin size={14} />
-                            {tournament.scope === "CITY" ? "Ville" : tournament.scope}
+                            {{
+                              NEIGHBORHOOD: "Quartier",
+                              CITY: "Ville",
+                              REGION: "Région",
+                              COUNTRY: "Pays",
+                              CONTINENT: "Continent",
+                              INTERNATIONAL: "International",
+                            }[tournament.scope] ?? tournament.scope}
                           </span>
+                          {(tournament.city ||
+                            tournament.region ||
+                            tournament.country ||
+                            tournament.continent) && (
+                            <span>
+                              {[tournament.city, tournament.region, tournament.country, tournament.continent]
+                                .filter(Boolean)
+                                .join(", ")}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -499,13 +786,11 @@ export function TournamentsClient() {
                         <div className="flex shrink-0 gap-2">
                           <button
                             type="button"
-                            onClick={() =>
-                              void respondToInvitation(
-                                tournament.id,
-                                invitation.id,
-                                "accept",
-                              )
-                            }
+                            onClick={() => openTournamentAction({
+                              tournament,
+                              intent: "accept",
+                              invitationId: invitation.id,
+                            })}
                             disabled={busy !== ""}
                             className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-[#07100c] disabled:opacity-50"
                           >
@@ -534,12 +819,11 @@ export function TournamentsClient() {
                         </div>
                       ) : (
                         tournament.status === "OPEN" &&
-                        currentUser &&
-                        tournament.creatorId !== currentUser.id &&
-                        !invitation &&
+                        !tournament.isParticipant &&
+                        (!invitation || invitation.status === "DECLINED") &&
                         <button
                           type="button"
-                          onClick={() => void joinTournament(tournament)}
+                          onClick={() => openTournamentAction({ tournament, intent: "join" })}
                           disabled={busy !== ""}
                           className="inline-flex shrink-0 items-center gap-2 self-start rounded-lg border border-emerald-200/20 px-3 py-2 text-sm text-emerald-100 disabled:opacity-50"
                         >
@@ -548,6 +832,11 @@ export function TournamentsClient() {
                           )}
                           S’inscrire
                         </button>
+                      )}
+                      {tournament.isParticipant && (
+                        <span className="shrink-0 rounded-lg bg-emerald-200/10 px-3 py-2 text-sm text-emerald-100">
+                          Inscrit
+                        </span>
                       )}
                     </div>
                     {invitation && invitation.status !== "PENDING" && (
@@ -566,6 +855,116 @@ export function TournamentsClient() {
           servent uniquement à tester l’interface et ne conviennent pas à la production.
         </p>
       </div>
+      {tournamentAction && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && busy === "") {
+              setTournamentAction(null);
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tournament-eligibility-title"
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-[#111814] p-6 shadow-2xl"
+          >
+            <h2 id="tournament-eligibility-title" className="text-xl font-semibold">
+              Conditions de participation
+            </h2>
+            <p className="mt-2 text-sm text-white/60">
+              {tournamentAction.tournament.name}
+            </p>
+            <div className="mt-5 space-y-3 text-sm">
+              <p>Format : {tournamentAction.tournament.type}</p>
+              <p>
+                Portée : {tournamentAction.tournament.scope}
+                {[tournamentAction.tournament.city, tournamentAction.tournament.region, tournamentAction.tournament.country, tournamentAction.tournament.continent]
+                  .filter(Boolean)
+                  .length > 0 && ` · ${[
+                    tournamentAction.tournament.city,
+                    tournamentAction.tournament.region,
+                    tournamentAction.tournament.country,
+                    tournamentAction.tournament.continent,
+                  ].filter(Boolean).join(", ")}`
+                }
+              </p>
+              <p>Jeu : {tournamentAction.tournament.gameType}</p>
+              <p>Statut : {tournamentAction.tournament.status === "OPEN" ? "Inscriptions ouvertes" : tournamentAction.tournament.status}</p>
+              <p>
+                Places : {tournamentAction.tournament._count.participants}/
+                {tournamentAction.tournament.maxPlayers}
+              </p>
+              <p>
+                Droit d’entrée : {tournamentAction.tournament.isPaid
+                  ? `${tournamentAction.tournament.entryFee} FCFA`
+                  : `${formatPoints(tournamentAction.tournament.entryPoints)} points gratuits`}
+              </p>
+              {tournamentAction.tournament.minPoints !== null && (
+                <p>Solde minimum : {formatPoints(tournamentAction.tournament.minPoints)} points</p>
+              )}
+              {tournamentAction.tournament.maxPoints !== null && (
+                <p>Solde maximum : {formatPoints(tournamentAction.tournament.maxPoints)} points</p>
+              )}
+              {tournamentAction.tournament.minElo !== null && (
+                <p>Elo minimum : {tournamentAction.tournament.minElo}</p>
+              )}
+              {tournamentAction.tournament.maxElo !== null && (
+                <p>Elo maximum : {tournamentAction.tournament.maxElo}</p>
+              )}
+              {tournamentAction.tournament.minBet !== null && (
+                <p>Mise minimale par match : {formatPoints(tournamentAction.tournament.minBet)} points</p>
+              )}
+              {tournamentAction.tournament.maxBet !== null && (
+                <p>Mise maximale par match : {formatPoints(tournamentAction.tournament.maxBet)} points</p>
+              )}
+              {currentUser && (
+                <p>
+                  Votre profil : {formatPoints(currentUser.pointsFree)} points gratuits · Elo {currentUser.elo}
+                  {currentUser.walletReal !== undefined && ` · ${currentUser.walletReal} FCFA`}
+                </p>
+              )}
+              <div className={getJoinRestrictions(tournamentAction.tournament).length ? "rounded-lg bg-rose-300/10 p-3 text-rose-100" : "rounded-lg bg-emerald-300/10 p-3 text-emerald-100"}>
+                <p className="font-semibold">
+                  {getJoinRestrictions(tournamentAction.tournament).length
+                    ? "Inscription impossible"
+                    : "Vous remplissez les conditions affichées."}
+                </p>
+                {getJoinRestrictions(tournamentAction.tournament).length > 0 && (
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    {getJoinRestrictions(tournamentAction.tournament).map((restriction) => (
+                      <li key={restriction}>{restriction}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {dialogError && (
+                <p role="alert" className="text-sm text-rose-200">{dialogError}</p>
+              )}
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setTournamentAction(null)}
+                disabled={busy !== ""}
+                className="rounded-lg border border-white/15 px-4 py-2 text-sm text-white/70 disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={confirmTournamentAction}
+                disabled={busy !== "" || getJoinRestrictions(tournamentAction.tournament).length > 0}
+                className="rounded-lg bg-emerald-300 px-4 py-2 text-sm font-semibold text-[#07100c] disabled:opacity-50"
+              >
+                {busy ? "Traitement…" : tournamentAction.intent === "accept" ? "Accepter l’invitation" : "Confirmer l’inscription"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

@@ -13,6 +13,8 @@ export interface MatchmakingCriteria {
 export interface JoinQueuePayload {
   gameType: GameType;
   isPaid?: boolean;
+  rated?: boolean;
+  betAmount?: number | null;
   strategy?: MatchmakingStrategy;
   criteria?: MatchmakingCriteria;
   timeControlMinutes?: number | null;
@@ -31,6 +33,11 @@ export interface ClientToServerEvents {
   respond_time: (payload: { matchId: string; accept: boolean }) => void;
   request_rematch: (payload: { matchId: string }) => void;
   cancel_rematch: (payload: { matchId: string }) => void;
+  chat_message: (payload: { matchId: string; message: string }) => void;
+  propose_bet: (payload: { matchId: string; amount: number }) => void;
+  accept_bet: (payload: { matchId: string }) => void;
+  reject_bet: (payload: { matchId: string }) => void;
+  counter_bet: (payload: { matchId: string; amount: number }) => void;
 }
 
 export interface OnlineMatchPly {
@@ -67,6 +74,7 @@ export interface ServerToClientEvents {
     playerId: string;
     playerColor: "w" | "b";
     opponentUsername: string;
+    opponentAvatar: string | null;
     draughtsVariant: "ENGLISH" | "INTERNATIONAL" | null;
     moves: OnlinePly[];
     status: "IN_PROGRESS" | "FINISHED" | "ABANDONED";
@@ -77,6 +85,10 @@ export interface ServerToClientEvents {
     blackTimeMs: number | null;
     pointsBalance: number | null;
     opponentPointsBalance: number | null;
+    betEnabled: boolean;
+    betAmount: number | null;
+    betStatus: string | null;
+    betProposedById: string | null;
   }) => void;
   move_accepted: (payload: {
     matchId: string;
@@ -104,6 +116,12 @@ export interface ServerToClientEvents {
     opponentPointsBalance: number;
     status: "FINISHED" | "ABANDONED";
     reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT";
+    whiteEloChange: number;
+    blackEloChange: number;
+    betSettled: boolean;
+    betAmount: number | null;
+    whiteResult: "WIN" | "LOSS" | "DRAW" | null;
+    blackResult: "WIN" | "LOSS" | "DRAW" | null;
   }) => void;
   match_left: (payload: { matchId: string; gracePeriodMs: number }) => void;
   rematch_waiting: (payload: { matchId: string }) => void;
@@ -121,6 +139,11 @@ export interface ServerToClientEvents {
   player_reconnected: (payload: { playerId: string }) => void;
   player_reconnect_expired: (payload: { playerId: string }) => void;
   server_error: (payload: { message: string }) => void;
+  chat_message: (payload: { matchId: string; from: string; text: string; ts: number }) => void;
+  bet_proposed: (payload: { matchId: string; amount: number; by: string }) => void;
+  bet_accepted: (payload: { matchId: string; amount: number; by: string }) => void;
+  bet_rejected: (payload: { matchId: string; by: string }) => void;
+  bet_countered: (payload: { matchId: string; amount: number; by: string }) => void;
 }
 
 export interface QueuedGame {

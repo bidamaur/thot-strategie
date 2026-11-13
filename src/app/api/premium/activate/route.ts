@@ -31,7 +31,10 @@ export async function POST(request: Request) {
         select: { isAdmin: true, isPremium: true },
       });
       if (!administrator?.isAdmin) {
-        return { error: "Seul le compte administrateur peut activer Premium.", status: 403 } as const;
+        return {
+          error: "Seul le compte administrateur peut activer Premium.",
+          status: 403,
+        } as const;
       }
       if (administrator.isPremium) {
         return { error: "Ce compte est déjà Premium.", status: 409 } as const;

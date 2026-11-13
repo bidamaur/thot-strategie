@@ -12,7 +12,7 @@ import {
   readSessionCookie,
 } from "../lib/auth/session";
 import { prisma } from "../lib/prisma";
-import { settleUnpaidMatch } from "../lib/scoring/settle-match";
+import { settleMatch } from "../lib/scoring/settle-match";
 import {
   applyDraughtsMove,
   createDraughtsPosition,
@@ -73,6 +73,18 @@ interface ActiveMatch {
   scoreDelta: number | null;
   whitePointsBalance: number | null;
   blackPointsBalance: number | null;
+  betEnabled: boolean;
+  betAmount: number | null;
+  betStatus:
+    | "PROPOSED"
+    | "ACCEPTED"
+    | "REJECTED"
+    | "COUNTERED"
+    | "SETTLED"
+    | "REFUNDED"
+    | "EXPIRED"
+    | null;
+  betProposedById: string | null;
   drawOfferById: string | null;
   timeProposal: number | null;
   timeProposalBy: string | null;
@@ -273,6 +285,10 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       scoreDelta: stored.scoreDelta,
       whitePointsBalance: stored.playerWhite.pointsFree,
       blackPointsBalance: stored.playerBlack.pointsFree,
+      betEnabled: stored.betEnabled,
+      betAmount: stored.betAmount,
+      betStatus: stored.betStatus,
+      betProposedById: stored.betProposedById,
        drawOfferById: null,
        timeProposal: null,
        timeProposalBy: null,
@@ -311,6 +327,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       playerId: socket.data.playerId,
       playerColor: isWhite ? "w" : "b",
       opponentUsername: match.usernames[isWhite ? 1 : 0],
+      opponentAvatar: null,
       draughtsVariant: match.draughtsVariant,
       moves: match.moves,
       status: match.status,
@@ -319,12 +336,16 @@ export function attachSocketServer(httpServer: HttpServer): Server {
        drawOfferById: match.drawOfferById,
        whiteTimeMs: match.whiteTimeMs,
        blackTimeMs: match.blackTimeMs,
-       pointsBalance: isWhite
-        ? match.whitePointsBalance
-        : match.blackPointsBalance,
+        pointsBalance: isWhite
+         ? match.whitePointsBalance
+         : match.blackPointsBalance,
       opponentPointsBalance: isWhite
         ? match.blackPointsBalance
         : match.whitePointsBalance,
+      betEnabled: match.betEnabled,
+      betAmount: match.betAmount,
+      betStatus: match.betStatus,
+      betProposedById: match.betProposedById,
     });
   };
 
@@ -458,19 +479,21 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         reason === "RESIGNATION" || reason === "DISCONNECT_FORFEIT"
           ? MatchStatus.ABANDONED
           : MatchStatus.FINISHED;
-      const settlement = await settleUnpaidMatch({
+
+      const result = await settleMatch({
         matchId: match.matchId,
         winnerId,
         whiteRemainingPieces: pieces.white,
         blackRemainingPieces: pieces.black,
         finalStatus,
+        result: winnerId === null ? "DRAW" : winnerId === match.playerIds[0] ? "WIN" : "LOSS",
       });
 
       match.status = finalStatus;
       match.winnerId = winnerId;
-      match.scoreDelta = settlement.scoreDelta;
-      match.whitePointsBalance = settlement.whiteBalance;
-      match.blackPointsBalance = settlement.blackBalance;
+      match.scoreDelta = result.scoreDelta;
+      match.whitePointsBalance = result.whiteBalance;
+      match.blackPointsBalance = result.blackBalance;
       match.drawOfferById = null;
       for (const timer of match.reconnectTimers.values()) clearTimeout(timer);
       match.reconnectTimers.clear();
@@ -478,28 +501,32 @@ export function attachSocketServer(httpServer: HttpServer): Server {
 
       for (const playerId of match.playerIds) {
         const isWhite = playerId === match.playerIds[0];
-        const balance = isWhite
-          ? settlement.whiteBalance
-          : settlement.blackBalance;
-        const opponentBalance = isWhite
-          ? settlement.blackBalance
-          : settlement.whiteBalance;
+        const balance = isWhite ? result.whiteBalance : result.blackBalance;
+        const opponentBalance = isWhite ? result.blackBalance : result.whiteBalance;
         const pointsChange =
           winnerId === null
             ? 0
             : winnerId === playerId
-              ? settlement.scoreDelta
-              : -settlement.scoreDelta;
+              ? result.scoreDelta
+              : -result.scoreDelta;
+        const eloChange = isWhite ? result.whiteEloChange : result.blackEloChange;
+        const opponentEloChange = isWhite ? result.blackEloChange : result.whiteEloChange;
         connectedPlayers.get(playerId)?.emit("match_finished", {
           matchId: match.matchId,
           winnerId,
-          scoreDelta: settlement.scoreDelta,
+          scoreDelta: result.scoreDelta,
           pointsChange,
           pointsBalance: balance,
           opponentPointsChange: -pointsChange,
           opponentPointsBalance: opponentBalance,
+          whiteEloChange: result.whiteEloChange,
+          blackEloChange: result.blackEloChange,
           status: finalStatus,
           reason,
+          betSettled: result.betSettled,
+          betAmount: result.betAmount,
+          whiteResult: result.whiteResult,
+          blackResult: result.blackResult,
         });
         connectedPlayers.get(playerId)?.emit("draw_offer_updated", {
           matchId: match.matchId,
@@ -925,6 +952,10 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         scoreDelta: null,
         whitePointsBalance: match.blackPointsBalance,
         blackPointsBalance: match.whitePointsBalance,
+        betEnabled: false,
+        betAmount: null,
+        betStatus: null,
+        betProposedById: null,
         drawOfferById: null,
        timeProposal: null,
        timeProposalBy: null,
@@ -1070,6 +1101,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
                     : PrismaDraughtsVariant.INTERNATIONAL)
                 : null,
             movesHistory: [],
+            rated: payload.rated === true,
             status: MatchStatus.IN_PROGRESS,
           },
           select: { id: true },
@@ -1094,6 +1126,10 @@ export function attachSocketServer(httpServer: HttpServer): Server {
             scoreDelta: null,
             whitePointsBalance: null,
             blackPointsBalance: null,
+            betEnabled: false,
+            betAmount: null,
+            betStatus: null,
+            betProposedById: null,
             drawOfferById: null,
        timeProposal: null,
        timeProposalBy: null,
@@ -1251,7 +1287,193 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       cancelRematchRequest(payload.matchId, playerId);
     });
 
-       socket.on("propose_time", (payload) => {
+    socket.on("propose_bet", (payload) => {
+      if (
+        !isRecord(payload) ||
+        typeof payload.matchId !== "string" ||
+        typeof payload.amount !== "number"
+      ) {
+        socket.emit("server_error", { message: "Proposition de mise invalide." });
+        return;
+      }
+      const match = matches.get(payload.matchId);
+      if (!match) {
+        socket.emit("server_error", { message: "Partie introuvable." });
+        return;
+      }
+      if (!match.playerIds.includes(playerId)) {
+        socket.emit("server_error", { message: "Vous ne participez pas à cette partie." });
+        return;
+      }
+      if (match.moves.length > 0) {
+        socket.emit("server_error", { message: "La mise ne peut être proposée qu'avant le premier coup." });
+        return;
+      }
+      if (match.drawOfferById) {
+        socket.emit("server_error", { message: "Une demande de nul est déjà en cours." });
+        return;
+      }
+      const amount = Math.min(1000, Math.max(1, Math.round(payload.amount)));
+      const proposerIdx = match.playerIds.indexOf(playerId);
+      const proposerBalance =
+        proposerIdx === 0 ? match.whitePointsBalance : match.blackPointsBalance;
+      if (proposerBalance === null || proposerBalance < amount) {
+        socket.emit("server_error", { message: "Solde insuffisant pour proposer cette mise." });
+        return;
+      }
+      // Annuler toute mise précédente
+      if (match.betStatus && match.betStatus !== "PROPOSED") {
+        socket.emit("server_error", { message: "Une mise est déjà en cours sur cette partie." });
+        return;
+      }
+      match.betEnabled = true;
+      match.betAmount = amount;
+      match.betStatus = "PROPOSED";
+      match.betProposedById = playerId;
+      io.to(payload.matchId).emit("bet_proposed", {
+        matchId: payload.matchId,
+        amount,
+        by: playerId,
+      });
+    });
+
+    socket.on("accept_bet", (payload) => {
+      if (
+        !isRecord(payload) ||
+        typeof payload.matchId !== "string"
+      ) {
+        socket.emit("server_error", { message: "Acceptation de mise invalide." });
+        return;
+      }
+      const match = matches.get(payload.matchId);
+      if (!match) {
+        socket.emit("server_error", { message: "Partie introuvable." });
+        return;
+      }
+      if (!match.playerIds.includes(playerId)) {
+        socket.emit("server_error", { message: "Vous ne participez pas à cette partie." });
+        return;
+      }
+      if (!match.betEnabled || match.betStatus !== "PROPOSED" || !match.betAmount) {
+        socket.emit("server_error", { message: "Aucune mise en attente sur cette partie." });
+        return;
+      }
+      if (match.betProposedById === playerId) {
+        socket.emit("server_error", { message: "Vous ne pouvez pas accepter votre propre mise." });
+        return;
+      }
+      const opponentIdx = match.playerIds.indexOf(playerId);
+      const opponentBalance =
+        opponentIdx === 0 ? match.whitePointsBalance : match.blackPointsBalance;
+      if (opponentBalance === null || opponentBalance < match.betAmount) {
+        socket.emit("server_error", { message: "Solde insuffisant pour accepter la mise." });
+        return;
+      }
+      match.betStatus = "ACCEPTED";
+      io.to(payload.matchId).emit("bet_accepted", {
+        matchId: payload.matchId,
+        amount: match.betAmount,
+        by: playerId,
+      });
+    });
+
+    socket.on("reject_bet", (payload) => {
+      if (
+        !isRecord(payload) ||
+        typeof payload.matchId !== "string"
+      ) {
+        socket.emit("server_error", { message: "Refus de mise invalide." });
+        return;
+      }
+      const match = matches.get(payload.matchId);
+      if (!match) {
+        socket.emit("server_error", { message: "Partie introuvable." });
+        return;
+      }
+      if (!match.playerIds.includes(playerId)) {
+        socket.emit("server_error", { message: "Vous ne participez pas à cette partie." });
+        return;
+      }
+      if (match.betStatus !== "PROPOSED") {
+        socket.emit("server_error", { message: "Aucune mise en attente sur cette partie." });
+        return;
+      }
+      match.betEnabled = false;
+      match.betAmount = null;
+      match.betStatus = null;
+      match.betProposedById = null;
+      io.to(payload.matchId).emit("bet_rejected", {
+        matchId: payload.matchId,
+        by: playerId,
+      });
+    });
+
+    socket.on("counter_bet", (payload) => {
+      if (
+        !isRecord(payload) ||
+        typeof payload.matchId !== "string" ||
+        typeof payload.amount !== "number"
+      ) {
+        socket.emit("server_error", { message: "Contre-proposition de mise invalide." });
+        return;
+      }
+      const match = matches.get(payload.matchId);
+      if (!match) {
+        socket.emit("server_error", { message: "Partie introuvable." });
+        return;
+      }
+      if (!match.playerIds.includes(playerId)) {
+        socket.emit("server_error", { message: "Vous ne participez pas à cette partie." });
+        return;
+      }
+      if (match.betStatus !== "PROPOSED" || !match.betAmount) {
+        socket.emit("server_error", { message: "Aucune mise en attente sur cette partie." });
+        return;
+      }
+      if (match.betProposedById === playerId) {
+        socket.emit("server_error", { message: "Vous ne pouvez pas contrer votre propre mise." });
+        return;
+      }
+      const amount = Math.min(1000, Math.max(1, Math.round(payload.amount)));
+      const opponentIdx = match.playerIds.indexOf(playerId);
+      const opponentBalance =
+        opponentIdx === 0 ? match.whitePointsBalance : match.blackPointsBalance;
+      if (opponentBalance === null || opponentBalance < amount) {
+        socket.emit("server_error", { message: "Solde insuffisant pour cette contre-proposition." });
+        return;
+      }
+      match.betAmount = amount;
+      match.betStatus = "COUNTERED";
+      io.to(payload.matchId).emit("bet_countered", {
+        matchId: payload.matchId,
+        amount,
+        by: playerId,
+      });
+    });
+
+    socket.on("chat_message", (payload) => {
+      if (!isRecord(payload) || typeof payload.matchId !== "string" || typeof payload.message !== "string") {
+        socket.emit("server_error", { message: "Message de chat invalide." });
+        return;
+      }
+      const match = matches.get(payload.matchId);
+      if (!match) return;
+      if (!match.playerIds.includes(playerId)) return;
+      const trimmed = payload.message.trim();
+      if (trimmed.length === 0) return;
+      if (trimmed.length > 500) {
+        socket.emit("server_error", { message: "Message trop long." });
+        return;
+      }
+      io.to(payload.matchId).emit("chat_message", {
+        matchId: payload.matchId,
+        from: playerId,
+        text: trimmed,
+        ts: Date.now(),
+      });
+    });
+
+     socket.on("propose_time", (payload) => {
         if (!isRecord(payload) || typeof payload.matchId !== "string") {
           socket.emit("server_error", { message: "Proposition de temps invalide." });
           return;

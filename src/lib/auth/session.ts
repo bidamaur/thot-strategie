@@ -75,24 +75,40 @@ export function readSessionCookie(cookieHeader: string | null): string | null {
     .split(";")
     .map((item) => item.trim())
     .find((item) => item.startsWith(prefix));
-  return cookie?.slice(prefix.length) || null;
+  if (!cookie) return null;
+  const value = cookie.slice(prefix.length);
+  if (!value) return null;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 export async function getSessionUserByToken(token: string | null) {
-  if (!token || token.length > 128) return null;
-  const session = await prisma.userSession.findUnique({
-    where: { tokenHash: hashSessionToken(token) },
-    select: {
-      user: { select: profileSelect },
-      expiresAt: true,
-    },
-  });
-  if (!session) return null;
-  if (session.expiresAt <= new Date()) {
-    await prisma.userSession.delete({ where: { tokenHash: hashSessionToken(token) } });
-    return null;
+  if (!token) return null;
+  const candidates = Array.from(
+    new Set([token, (() => { try { return decodeURIComponent(token); } catch { return token; } })()]),
+  ).filter((t) => t.length > 0 && t.length <= 128);
+  if (candidates.length === 0) return null;
+
+  for (const candidate of candidates) {
+    const tokenHash = hashSessionToken(candidate);
+    const session = await prisma.userSession.findUnique({
+      where: { tokenHash },
+      select: {
+        user: { select: profileSelect },
+        expiresAt: true,
+      },
+    });
+    if (!session) continue;
+    if (session.expiresAt <= new Date()) {
+      await prisma.userSession.deleteMany({ where: { tokenHash } }).catch(() => undefined);
+      continue;
+    }
+    return session.user;
   }
-  return session.user;
+  return null;
 }
 
 export async function getRequestUser(request: Request) {

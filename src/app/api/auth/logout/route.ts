@@ -22,11 +22,14 @@ export async function POST(request: Request) {
     }
   }
 
+  const secure =
+    new URL(request.url).protocol === "https:" ||
+    request.headers.get("x-forwarded-proto") === "https";
   const response = NextResponse.json({ loggedOut: true });
   response.cookies.set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure,
     path: "/",
     maxAge: 0,
   });

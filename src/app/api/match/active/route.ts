@@ -6,7 +6,11 @@ import { connection, NextResponse } from "next/server";
 const RECONNECT_GRACE_MS = 60_000;
 
 export async function GET(request: Request) {
-  await connection();
+  try {
+    await connection();
+  } catch {
+    // Ignore connection errors; the request can proceed without it.
+  }
   try {
     const user = await getRequestUser(request);
     if (!user) {

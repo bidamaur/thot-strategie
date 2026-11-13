@@ -2,11 +2,11 @@ import {
   isMockEconomyEnabled,
   mockEconomyDisabledResponse,
 } from "@/lib/economy/mock-mode";
-import { getRequestUser } from "@/lib/auth/session";
 import {
   registerTournamentPlayer,
   TournamentEconomyError,
 } from "@/lib/economy/tournaments";
+import { getRequestUser } from "@/lib/auth/session";
 import { NextResponse } from "next/server";
 
 interface RouteContext {
@@ -22,11 +22,8 @@ export async function POST(request: Request, { params }: RouteContext) {
   }
 
   try {
-    const registration = await registerTournamentPlayer(
-      tournamentId,
-      currentUser.id,
-    );
-    return NextResponse.json({ registration }, { status: 201 });
+    const result = await registerTournamentPlayer(tournamentId, currentUser.id);
+    return NextResponse.json({ registration: result }, { status: 201 });
   } catch (error) {
     if (error instanceof TournamentEconomyError) {
       const status =
@@ -34,7 +31,9 @@ export async function POST(request: Request, { params }: RouteContext) {
           ? 404
           : error.code === "INSUFFICIENT_FUNDS"
             ? 402
-            : error.code === "ALREADY_JOINED" || error.code === "NOT_OPEN" || error.code === "FULL"
+            : error.code === "ALREADY_JOINED" ||
+                error.code === "NOT_OPEN" ||
+                error.code === "FULL"
               ? 409
               : 400;
       return NextResponse.json({ error: error.message }, { status });

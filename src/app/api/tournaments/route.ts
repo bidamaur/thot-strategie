@@ -1,4 +1,8 @@
-import { TournamentScope } from "@/generated/prisma-client";
+import {
+  Prisma,
+  TournamentScope,
+  TournamentType,
+} from "@/generated/prisma-client";
 import {
   createTournament,
   TournamentEconomyError,
@@ -9,34 +13,115 @@ import {
 } from "@/lib/economy/mock-mode";
 import { getRequestUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
+import { TournamentEligibilityEngine } from "@/lib/tournament/eligibility";
 import { NextResponse } from "next/server";
 
 const SCOPES = new Set<TournamentScope>(Object.values(TournamentScope));
+const TYPES = new Set<TournamentType>(Object.values(TournamentType));
 
 export async function GET(request: Request) {
   try {
     const currentUser = await getRequestUser(request);
-    const tournaments = await prisma.tournament.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 100,
-      include: {
-        creator: { select: { id: true, username: true } },
-        _count: { select: { participants: true } },
-        invitations: currentUser
-          ? {
-              where: { userId: currentUser.id },
-              select: { id: true, userId: true, status: true },
-            }
-          : false,
-      },
-    });
+    let tournaments;
+    try {
+      tournaments = await prisma.tournament.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        include: {
+          creator: { select: { id: true, username: true } },
+          _count: { select: { participants: true } },
+          invitations: currentUser
+            ? {
+                where: { userId: currentUser.id },
+                select: { id: true, userId: true, status: true },
+              }
+            : false,
+        },
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+        error.code !== "P2022"
+      ) {
+        throw error;
+      }
+
+      console.warn(
+        "Schéma des tournois en retard : affichage des champs disponibles avant la migration des détails.",
+      );
+      tournaments = await prisma.tournament.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        select: {
+          id: true,
+          creatorId: true,
+          scope: true,
+          isPaid: true,
+          entryFee: true,
+          entryPoints: true,
+          totalPrizePool: true,
+          maxPlayers: true,
+          status: true,
+          createdAt: true,
+          platformFee: true,
+          creator: { select: { id: true, username: true } },
+          _count: { select: { participants: true } },
+          invitations: currentUser
+            ? {
+                where: { userId: currentUser.id },
+                select: { id: true, userId: true, status: true },
+              }
+            : false,
+        },
+      });
+    }
+
+    const registrations = currentUser
+      ? await prisma.tournamentParticipant.findMany({
+          where: { userId: currentUser.id },
+          select: { tournamentId: true },
+        })
+      : [];
+    const registeredTournamentIds = new Set(
+      registrations.map((registration) => registration.tournamentId),
+    );
     return NextResponse.json({
-      tournaments: tournaments.map((tournament) => ({
-        ...tournament,
-        entryFee: tournament.entryFee.toString(),
-        totalPrizePool: tournament.totalPrizePool.toString(),
-        platformFee: tournament.platformFee.toString(),
-      })),
+      tournaments: tournaments.map((tournament) => {
+        const hasDetails = "name" in tournament;
+        return {
+          ...tournament,
+          name: hasDetails
+            ? tournament.name
+            : `Tournoi de ${tournament.creator.username}`,
+          city: hasDetails ? tournament.city : null,
+          region: hasDetails ? tournament.region : null,
+          country: hasDetails ? tournament.country : null,
+          continent: hasDetails ? tournament.continent : null,
+          type: "type" in tournament ? tournament.type : "ELIMINATION",
+          gameType: "gameType" in tournament ? tournament.gameType : "CHECKERS",
+          draughtsVariant:
+            "draughtsVariant" in tournament
+              ? tournament.draughtsVariant
+              : "INTERNATIONAL",
+          minElo: "minElo" in tournament ? tournament.minElo : null,
+          maxElo: "maxElo" in tournament ? tournament.maxElo : null,
+          minPoints: "minPoints" in tournament ? tournament.minPoints : null,
+          maxPoints: "maxPoints" in tournament ? tournament.maxPoints : null,
+          minBet: "minBet" in tournament ? tournament.minBet : null,
+          maxBet: "maxBet" in tournament ? tournament.maxBet : null,
+          survivalBankEnabled:
+            "survivalBankEnabled" in tournament
+              ? tournament.survivalBankEnabled
+              : false,
+          isParticipant: registeredTournamentIds.has(tournament.id),
+          invitations: Array.isArray(tournament.invitations)
+            ? tournament.invitations
+            : [],
+          entryFee: tournament.entryFee.toString(),
+          totalPrizePool: tournament.totalPrizePool.toString(),
+          platformFee: tournament.platformFee.toString(),
+        };
+      }),
     });
   } catch (error) {
     console.error("Erreur lors de la lecture des tournois :", error);
@@ -51,7 +136,10 @@ export async function POST(request: Request) {
   if (!isMockEconomyEnabled()) return mockEconomyDisabledResponse();
   const currentUser = await getRequestUser(request);
   if (!currentUser) {
-    return NextResponse.json({ error: "Connectez-vous pour créer un tournoi." }, { status: 401 });
+    return NextResponse.json(
+      { error: "Connectez-vous pour créer un tournoi." },
+      { status: 401 },
+    );
   }
 
   let body: unknown;
@@ -63,43 +151,191 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (typeof body !== "object" || body === null) {
-    return NextResponse.json({ error: "Données de tournoi invalides." }, { status: 400 });
-  }
-
-  const { scope, isPaid, entryFeeCfa, entryPoints, maxPlayers } =
-    body as Record<string, unknown>;
-  const inviteUserIds =
-    "inviteUserIds" in body &&
-    Array.isArray(body.inviteUserIds) &&
-    body.inviteUserIds.every((userId) => typeof userId === "string")
-      ? body.inviteUserIds
-      : undefined;
-  if (
-    typeof scope !== "string" ||
-    !SCOPES.has(scope as TournamentScope) ||
-    typeof isPaid !== "boolean" ||
-    typeof entryFeeCfa !== "number" ||
-    typeof entryPoints !== "number" ||
-    typeof maxPlayers !== "number" ||
-    ("inviteUserIds" in body && !inviteUserIds)
-  ) {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return NextResponse.json(
-      { error: "Créateur, portée, catégorie, droit d’entrée et quota requis." },
+      { error: "Données de tournoi invalides." },
       { status: 400 },
     );
   }
 
+  const fields = body as Record<string, unknown>;
+  const {
+    name,
+    type,
+    scope,
+    isPaid,
+    entryFeeCfa,
+    entryPoints,
+    maxPlayers,
+    gameType,
+    draughtsVariant,
+    timeControlMinutes,
+    minElo,
+    maxElo,
+    minPoints,
+    maxPoints,
+    initialCapital,
+    minBet,
+    maxBet,
+    betMode,
+    rebuyEnabled,
+    city,
+    region,
+    country,
+    continent,
+  } = fields;
+
+  const resolvedName =
+    typeof name === "string" && name.trim()
+      ? name.trim()
+      : `Tournoi de ${currentUser.username}`;
+  const resolvedType = type ?? "SURVIVAL_BANK";
+  const resolvedScope = scope ?? "CITY";
+  const resolvedIsPaid = isPaid ?? false;
+  const resolvedEntryPoints = entryPoints ?? 1;
+  const resolvedMaxPlayers = maxPlayers ?? 4;
+  const resolvedGameType = gameType ?? "CHECKERS";
+  const resolvedDraughtsVariant = draughtsVariant ?? "INTERNATIONAL";
+  const resolvedBetMode = betMode ?? "FIXED";
+  const inviteUserIds = fields.inviteUserIds;
+  const optionalIntegerFields = [
+    timeControlMinutes,
+    minElo,
+    maxElo,
+    minPoints,
+    maxPoints,
+    initialCapital,
+    minBet,
+    maxBet,
+  ];
+
+  if (
+    resolvedName.length > 100 ||
+    typeof resolvedType !== "string" ||
+    !TYPES.has(resolvedType as TournamentType) ||
+    typeof resolvedScope !== "string" ||
+    !SCOPES.has(resolvedScope as TournamentScope) ||
+    typeof resolvedIsPaid !== "boolean" ||
+    typeof resolvedEntryPoints !== "number" ||
+    !Number.isSafeInteger(resolvedEntryPoints) ||
+    (resolvedIsPaid ? resolvedEntryPoints !== 0 : resolvedEntryPoints < 1) ||
+    (resolvedIsPaid &&
+      (typeof entryFeeCfa !== "number" ||
+        !Number.isSafeInteger(entryFeeCfa) ||
+        entryFeeCfa < 100)) ||
+    (!resolvedIsPaid && entryFeeCfa !== undefined && entryFeeCfa !== 0) ||
+    typeof resolvedMaxPlayers !== "number" ||
+    !Number.isInteger(resolvedMaxPlayers) ||
+    typeof resolvedGameType !== "string" ||
+    !["CHESS", "CHECKERS"].includes(resolvedGameType) ||
+    typeof resolvedDraughtsVariant !== "string" ||
+    !["ENGLISH", "INTERNATIONAL"].includes(resolvedDraughtsVariant) ||
+    typeof resolvedBetMode !== "string" ||
+    !["FIXED", "VARIABLE"].includes(resolvedBetMode) ||
+    optionalIntegerFields.some(
+      (value) =>
+        value !== undefined &&
+        value !== null &&
+        (typeof value !== "number" ||
+          !Number.isSafeInteger(value) ||
+          value < 0),
+    ) ||
+    (minElo != null && maxElo != null && (minElo as number) > (maxElo as number)) ||
+    (minPoints != null &&
+        maxPoints != null &&
+        (minPoints as number) > (maxPoints as number)) ||
+    (minBet != null &&
+        maxBet != null &&
+        (minBet as number) > (maxBet as number)) ||
+    [city, region, country, continent].some(
+      (value) =>
+        value !== undefined &&
+        value !== null &&
+        (typeof value !== "string" || value.trim().length > 80),
+    ) ||
+    (inviteUserIds !== undefined &&
+      (!Array.isArray(inviteUserIds) ||
+        !inviteUserIds.every((userId) => typeof userId === "string")))
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "Vérifiez le type, la portée, le nombre de joueurs, le droit d’entrée et les conditions du tournoi.",
+      },
+      { status: 400 },
+    );
+  }
+
+  const entryFee = typeof entryFeeCfa === "number" ? entryFeeCfa : 0;
+  const requiredPoints = resolvedEntryPoints as number;
+  const playerCount = resolvedMaxPlayers as number;
+  const tournamentType = resolvedType as TournamentType;
+  const tournamentScope = resolvedScope as TournamentScope;
+  const game = resolvedGameType as "CHESS" | "CHECKERS";
+  const variant = resolvedDraughtsVariant as "ENGLISH" | "INTERNATIONAL";
+  const paid = resolvedIsPaid;
+  const optionalNumber = (value: unknown) =>
+    typeof value === "number" ? value : undefined;
+  const optionalLocation = (value: unknown) =>
+    typeof value === "string" ? value.trim() || null : null;
+
   try {
+    await TournamentEligibilityEngine.validateCreateTournament({
+      userId: currentUser.id,
+      type: tournamentType,
+      scope: tournamentScope,
+      city: optionalLocation(city),
+      region: optionalLocation(region),
+      country: optionalLocation(country),
+      continent: optionalLocation(continent),
+      isPaid: paid,
+      entryFeeCfa: entryFee,
+      entryPoints: requiredPoints,
+      maxPlayers: playerCount,
+      gameType: game,
+      draughtsVariant: variant,
+      timeControlMinutes: optionalNumber(timeControlMinutes),
+      minElo: optionalNumber(minElo),
+      maxElo: optionalNumber(maxElo),
+      minPoints: optionalNumber(minPoints),
+      maxPoints: optionalNumber(maxPoints),
+      initialCapital: optionalNumber(initialCapital),
+      minBet: optionalNumber(minBet),
+      maxBet: optionalNumber(maxBet),
+      betMode: resolvedBetMode as "FIXED" | "VARIABLE",
+      survivalBankEnabled: tournamentType === "SURVIVAL_BANK",
+      rebuyEnabled: typeof rebuyEnabled === "boolean" ? rebuyEnabled : false,
+      invitedUserIds: inviteUserIds as string[] | undefined,
+    });
+
     const tournament = await createTournament({
       creatorId: currentUser.id,
-      scope: scope as TournamentScope,
-      isPaid,
-      entryFeeCfa,
-      entryPoints,
-      maxPlayers,
-      ...(inviteUserIds ? { invitedUserIds: inviteUserIds } : {}),
+      name: resolvedName,
+      type: tournamentType,
+      scope: tournamentScope,
+      gameType: game,
+      draughtsVariant: variant,
+      city: optionalLocation(city),
+      region: optionalLocation(region),
+      country: optionalLocation(country),
+      continent: optionalLocation(continent),
+      isPaid: paid,
+      entryFeeCfa: entryFee,
+      entryPoints: requiredPoints,
+      maxPlayers: playerCount,
+      timeControlMinutes: optionalNumber(timeControlMinutes),
+      minElo: optionalNumber(minElo),
+      maxElo: optionalNumber(maxElo),
+      minPoints: optionalNumber(minPoints),
+      maxPoints: optionalNumber(maxPoints),
+      initialCapital: optionalNumber(initialCapital),
+      minBet: optionalNumber(minBet),
+      maxBet: optionalNumber(maxBet),
+      betMode: resolvedBetMode as "FIXED" | "VARIABLE",
+      rebuyEnabled: typeof rebuyEnabled === "boolean" ? rebuyEnabled : false,
+      invitedUserIds: inviteUserIds as string[] | undefined,
     });
+
     return NextResponse.json(
       {
         tournament: {
@@ -118,8 +354,17 @@ export async function POST(request: Request) {
           ? 404
           : error.code === "PREMIUM_REQUIRED"
             ? 403
-            : 400;
+            : error.code === "INSUFFICIENT_FUNDS"
+              ? 402
+              : error.code === "NOT_OPEN" ||
+                  error.code === "ALREADY_JOINED" ||
+                  error.code === "FULL"
+                ? 409
+                : 400;
       return NextResponse.json({ error: error.message }, { status });
+    }
+    if (error instanceof Error && error.name === "TournamentEligibilityError") {
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
     console.error("Erreur lors de la création du tournoi :", error);
     return NextResponse.json(
