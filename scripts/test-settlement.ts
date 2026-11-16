@@ -1,4 +1,8 @@
-import { settleMatch, MatchSettlementError } from "@/lib/scoring/settle-match";
+import { settleMatch } from "@/lib/scoring/settle-match";
+import {
+  escrowGameBet,
+  InsufficientBetBalanceError,
+} from "@/lib/economy/game-bets";
 import { prisma } from "@/lib/prisma";
 
 const settledIds: string[] = [];
@@ -44,9 +48,31 @@ async function createBet(opts: any = {}) {
   });
 }
 
+async function escrowBet(
+  betId: string,
+  matchId: string,
+  whiteId: string,
+  blackId: string,
+  amount: number,
+) {
+  return prisma.$transaction((transaction) =>
+    escrowGameBet(transaction, {
+      betId,
+      matchId,
+      playerIds: [whiteId, blackId],
+      amount,
+    }),
+  );
+}
+
 async function getBalance(userId: string) {
   const u = await prisma.user.findUnique({ where: { id: userId } });
   return u!.pointsFree;
+}
+
+async function getWalletBalance(userId: string) {
+  const u = await prisma.user.findUnique({ where: { id: userId } });
+  return u!.walletReal.toNumber();
 }
 
 async function getElo(userId: string) {
@@ -63,6 +89,7 @@ async function cleanup() {
     await prisma.match.delete({ where: { id } }).catch(() => {});
   }
   for (const id of userIds) {
+    await prisma.balanceTransaction.deleteMany({ where: { userId: id } });
     await prisma.userSession.deleteMany({ where: { userId: id } }).catch(() => {});
     await prisma.user.delete({ where: { id } }).catch(() => {});
   }
@@ -91,10 +118,10 @@ async function test(name: string, fn: () => Promise<void>) {
 }
 
 async function main() {
-  console.log("=== Phase 5: ELO/Bet Settlement Tests (21 cases) ===\n");
+  console.log("=== Phase 5: ELO/Bet Settlement Tests (22 cases) ===\n");
 
-  // ── Mode A: no bet ──
-  await test("T1: Win without bet — winner gains points, loser loses none", async () => {
+  // ── Match points: symmetric gains and losses ──
+  await test("T1: Win without bet — winner gains and loser loses scoreDelta", async () => {
     const white = await createUser("t1_white", 500, 1200);
     const black = await createUser("t1_black", 500, 1200);
     const match = await createMatch({ playerWhiteId: white.id, playerBlackId: black.id, rated: true, betEnabled: false });
@@ -113,10 +140,10 @@ async function main() {
     const wb = await getBalance(white.id);
     const bb = await getBalance(black.id);
     assert(wb === 500 + result.scoreDelta!, `white balance = ${500 + result.scoreDelta!}, got ${wb}`);
-    assert(bb === 500, `black balance stays 500, got ${bb}`);
+    assert(bb === 500 - result.scoreDelta!, `black balance = ${500 - result.scoreDelta!}, got ${bb}`);
   });
 
-  await test("T2: Loss without bet — winner gains points, loser loses none", async () => {
+  await test("T2: Loss without bet — winner gains and loser loses scoreDelta", async () => {
     const white = await createUser("t2_white", 500, 1200);
     const black = await createUser("t2_black", 500, 1200);
     const match = await createMatch({ playerWhiteId: white.id, playerBlackId: black.id, rated: true, betEnabled: false });
@@ -132,7 +159,7 @@ async function main() {
 
     const wb = await getBalance(white.id);
     const bb = await getBalance(black.id);
-    assert(wb === 500, `white balance stays 500, got ${wb}`);
+    assert(wb === 500 - result.scoreDelta!, `white balance = ${500 - result.scoreDelta!}, got ${wb}`);
     assert(bb === 500 + result.scoreDelta!, `black balance = ${500 + result.scoreDelta!}, got ${bb}`);
   });
 
@@ -201,7 +228,8 @@ async function main() {
       playerWhiteId: white.id, playerBlackId: black.id, rated: false,
       betEnabled: true, betAmount: 100, betStatus: "ACCEPTED", betProposedById: white.id,
     });
-    await createBet({ matchId: match.id, proposerId: white.id, opponentId: black.id, amount: 100, status: "ACCEPTED" });
+    const bet = await createBet({ matchId: match.id, proposerId: white.id, opponentId: black.id, amount: 100, status: "ACCEPTED" });
+    await escrowBet(bet.id, match.id, white.id, black.id, 100);
 
     const result = await settleMatch({
       matchId: match.id, winnerId: white.id, whiteRemainingPieces: 12, blackRemainingPieces: 4,
@@ -215,8 +243,14 @@ async function main() {
 
     const wb = await getBalance(white.id);
     const bb = await getBalance(black.id);
-    assert(wb > 1000, `white balance > 1000, got ${wb}`);
-    assert(bb < 1000, `black balance < 1000, got ${bb}`);
+    assert(
+      wb === 1000 + result.scoreDelta! + 100,
+      `white balance = ${1000 + result.scoreDelta! + 100}, got ${wb}`,
+    );
+    assert(
+      bb === 1000 - result.scoreDelta! - 100,
+      `black balance = ${1000 - result.scoreDelta! - 100}, got ${bb}`,
+    );
   });
 
   await test("T7: Loss with bet — black wins, gets own bet back + white's bet", async () => {
@@ -226,7 +260,8 @@ async function main() {
       playerWhiteId: white.id, playerBlackId: black.id, rated: false,
       betEnabled: true, betAmount: 100, betStatus: "ACCEPTED", betProposedById: white.id,
     });
-    await createBet({ matchId: match.id, proposerId: white.id, opponentId: black.id, amount: 100, status: "ACCEPTED" });
+    const bet = await createBet({ matchId: match.id, proposerId: white.id, opponentId: black.id, amount: 100, status: "ACCEPTED" });
+    await escrowBet(bet.id, match.id, white.id, black.id, 100);
 
     const result = await settleMatch({
       matchId: match.id, winnerId: black.id, whiteRemainingPieces: 4, blackRemainingPieces: 12,
@@ -240,8 +275,14 @@ async function main() {
 
     const wb = await getBalance(white.id);
     const bb = await getBalance(black.id);
-    assert(wb < 1000, `white balance < 1000, got ${wb}`);
-    assert(bb > 1000, `black balance > 1000, got ${bb}`);
+    assert(
+      wb === 1000 - result.scoreDelta! - 100,
+      `white balance = ${1000 - result.scoreDelta! - 100}, got ${wb}`,
+    );
+    assert(
+      bb === 1000 + result.scoreDelta! + 100,
+      `black balance = ${1000 + result.scoreDelta! + 100}, got ${bb}`,
+    );
   });
 
   await test("T8: Draw with bet — both bets refunded", async () => {
@@ -251,10 +292,8 @@ async function main() {
       playerWhiteId: white.id, playerBlackId: black.id, rated: false,
       betEnabled: true, betAmount: 100, betStatus: "ACCEPTED", betProposedById: white.id,
     });
-    await createBet({ matchId: match.id, proposerId: white.id, opponentId: black.id, amount: 100, status: "ACCEPTED" });
-    // Simulate escrow deduction at bet acceptance (done by socket server)
-    await prisma.user.update({ where: { id: white.id }, data: { pointsFree: { decrement: 100 } } });
-    await prisma.user.update({ where: { id: black.id }, data: { pointsFree: { decrement: 100 } } });
+    const bet = await createBet({ matchId: match.id, proposerId: white.id, opponentId: black.id, amount: 100, status: "ACCEPTED" });
+    await escrowBet(bet.id, match.id, white.id, black.id, 100);
 
     const result = await settleMatch({
       matchId: match.id, winnerId: null, whiteRemainingPieces: 8, blackRemainingPieces: 8,
@@ -280,7 +319,8 @@ async function main() {
       playerWhiteId: white.id, playerBlackId: black.id, rated: false,
       betEnabled: true, betAmount: 200, betStatus: "ACCEPTED", betProposedById: black.id,
     });
-    await createBet({ matchId: match.id, proposerId: black.id, opponentId: white.id, amount: 200, status: "ACCEPTED" });
+    const bet = await createBet({ matchId: match.id, proposerId: black.id, opponentId: white.id, amount: 200, status: "ACCEPTED" });
+    await escrowBet(bet.id, match.id, white.id, black.id, 200);
 
     const result = await settleMatch({
       matchId: match.id, winnerId: white.id, whiteRemainingPieces: 14, blackRemainingPieces: 2,
@@ -317,7 +357,8 @@ async function main() {
       playerWhiteId: white.id, playerBlackId: black.id, rated: false,
       betEnabled: true, betAmount: 150, betStatus: "ACCEPTED", betProposedById: black.id,
     });
-    await createBet({ matchId: match.id, proposerId: black.id, opponentId: white.id, amount: 150, status: "ACCEPTED" });
+    const bet = await createBet({ matchId: match.id, proposerId: black.id, opponentId: white.id, amount: 150, status: "ACCEPTED" });
+    await escrowBet(bet.id, match.id, white.id, black.id, 150);
 
     const result = await settleMatch({
       matchId: match.id, winnerId: white.id, whiteRemainingPieces: 12, blackRemainingPieces: 6,
@@ -346,22 +387,21 @@ async function main() {
     assert(result.betAmount === null, "betAmount is null");
   });
 
-  await test("T13: Bet with insufficient balance — settles anyway (validated before accept)", async () => {
-    const white = await createUser("t13_white", 10, 1200);
+  await test("T13: A loss never makes classic points negative (points.classic.floorAtZero) and never touches the wallet", async () => {
+    const white = await createUser("t13_white", 1, 1200);
     const black = await createUser("t13_black", 1000, 1200);
     const match = await createMatch({
       playerWhiteId: white.id, playerBlackId: black.id, rated: false,
-      betEnabled: true, betAmount: 500, betStatus: "ACCEPTED", betProposedById: white.id,
+      betEnabled: false,
     });
-    await createBet({ matchId: match.id, proposerId: white.id, opponentId: black.id, amount: 500, status: "ACCEPTED" });
 
     const result = await settleMatch({
-      matchId: match.id, winnerId: white.id, whiteRemainingPieces: 12, blackRemainingPieces: 4,
-      finalStatus: "FINISHED", result: "WIN",
+      matchId: match.id, winnerId: black.id, whiteRemainingPieces: 4, blackRemainingPieces: 12,
+      finalStatus: "FINISHED", result: "LOSS",
     });
 
-    assert(result.betSettled === true, "betSettled is true");
-    assert(result.betAmount === 500, "betAmount is 500");
+    assert((await getBalance(white.id)) === 0, "loser's classic points are floored at zero");
+    assert((await getWalletBalance(white.id)) === 0, "loser's FCFA wallet remains unchanged");
   });
 
   await test("T14: Bet expires — no settlement, treated as no bet", async () => {
@@ -457,20 +497,24 @@ async function main() {
     }
   });
 
-  await test("T19: Frontend tampering — wrong winnerId results in draw", async () => {
+  await test("T19: Frontend tampering — a winnerId outside the match is rejected", async () => {
     const white = await createUser("t19_white", 500, 1200);
     const black = await createUser("t19_black", 500, 1200);
     const tamperer = await createUser("t19_tamperer", 500, 1200);
     const match = await createMatch({ playerWhiteId: white.id, playerBlackId: black.id, rated: false, betEnabled: false });
 
-    const result = await settleMatch({
-      matchId: match.id, winnerId: tamperer.id, whiteRemainingPieces: 12, blackRemainingPieces: 4,
-      finalStatus: "FINISHED", result: "DRAW",
-    });
-
-    assert(result.whiteResult === "DRAW", "whiteResult is DRAW");
-    assert(result.blackResult === "DRAW", "blackResult is DRAW");
-    assert(result.scoreDelta === 0, "scoreDelta is 0");
+    let code: string | null = null;
+    try {
+      await settleMatch({
+        matchId: match.id, winnerId: tamperer.id, whiteRemainingPieces: 12, blackRemainingPieces: 4,
+        finalStatus: "FINISHED", result: "DRAW",
+      });
+    } catch (error) {
+      code = (error as { code?: string }).code ?? null;
+    }
+    assert(code === "INVALID_RESULT", "tampered winner is rejected with INVALID_RESULT");
+    assert((await getBalance(white.id)) === 500, "white balance untouched");
+    assert((await getBalance(black.id)) === 500, "black balance untouched");
   });
 
   await test("T20: Not rated match — no Elo changes but points still awarded", async () => {
@@ -507,6 +551,39 @@ async function main() {
     assert(result.blackResult === "LOSS", "blackResult is LOSS");
     assert(result.scoreDelta! > 0, "scoreDelta > 0");
     assert(result.betSettled === false, "betSettled is false");
+  });
+
+  await test("T22: Insufficient points roll back both escrow debits", async () => {
+    const white = await createUser("t22_white", 100);
+    const black = await createUser("t22_black", 10);
+    const match = await createMatch({
+      playerWhiteId: white.id,
+      playerBlackId: black.id,
+      betEnabled: false,
+    });
+    const bet = await createBet({
+      matchId: match.id,
+      proposerId: white.id,
+      opponentId: black.id,
+      amount: 50,
+    });
+
+    try {
+      await escrowBet(bet.id, match.id, white.id, black.id, 50);
+      assert(false, "escrow should reject the insufficient balance");
+    } catch (error) {
+      assert(
+        error instanceof InsufficientBetBalanceError,
+        "escrow reports insufficient points",
+      );
+    }
+
+    assert((await getBalance(white.id)) === 100, "first balance remains unchanged");
+    assert((await getBalance(black.id)) === 10, "second balance remains unchanged");
+    const transactions = await prisma.balanceTransaction.count({
+      where: { userId: { in: [white.id, black.id] } },
+    });
+    assert(transactions === 0, "failed escrow records no transactions");
   });
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===\n`);
