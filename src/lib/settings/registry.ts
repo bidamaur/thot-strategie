@@ -345,6 +345,10 @@ export const SETTING_DEFINITIONS = [
   { key: "tournament_max_players", category: "tournaments", type: "json", default: { min: 4, max: 64 }, label: "Capacité des tournois {min, max}" },
   { key: "platform_fee_percentage", category: "tournaments", type: "number", default: 10, min: 0, max: 50, label: "Commission sur les tournois payants", unit: "%", critical: true },
   { key: "entry_fee_min_cfa", category: "tournaments", type: "number", default: 100, min: 0, max: 10_000_000, integer: true, label: "Droit d'entrée minimum", unit: "FCFA" },
+  { key: "tournaments.swissRounds", category: "tournaments", type: "number", default: 0, min: 0, max: 20, integer: true, label: "Rondes en système suisse (0 = automatique)" },
+  { key: "tournaments.roundRobinMaxPlayers", category: "tournaments", type: "number", default: 20, min: 3, max: 40, integer: true, label: "Joueurs max. en toutes rondes / ligue" },
+  { key: "tournaments.gamesRated", category: "tournaments", type: "boolean", default: true, label: "Les parties de tournoi comptent pour l'ELO" },
+  { key: "tournaments.prizeSplitPercent", category: "tournaments", type: "json", default: [50, 30, 20], label: "Répartition des prix (1er, 2e, 3e) en %", description: "Trois pourcentages dont la somme vaut 100." },
   { key: "tournaments.freezeRulesOnStart", category: "tournaments", type: "boolean", default: true, label: "Figer les règles au démarrage", description: "Les paramètres sont copiés dans le tournoi à son lancement et ne changent plus." },
 
   // ── Survival ─────────────────────────────────────────────────────────
@@ -377,6 +381,7 @@ export type SettingValue<K extends SettingKey> =
   : K extends "money.stakePresets" ? number[]
   : K extends "allowed_tournament_types" ? string[]
   : K extends "tournament_max_players" ? { min: number; max: number }
+  : K extends "tournaments.prizeSplitPercent" ? [number, number, number]
   : unknown;
 
 const DEF_MAP = new Map<string, SettingDef>(
@@ -459,6 +464,17 @@ function validateJsonSetting(
     const v = value as { min?: unknown; max?: unknown };
     if (!Number.isInteger(v.min) || !Number.isInteger(v.max) || (v.min as number) < 2 || (v.max as number) < (v.min as number)) {
       return { ok: false, error: "Capacité invalide : {min ≥ 2, max ≥ min}." };
+    }
+    return { ok: true, value };
+  }
+  if (key === "tournaments.prizeSplitPercent") {
+    if (
+      !Array.isArray(value) ||
+      value.length !== 3 ||
+      !value.every((v) => Number.isInteger(v) && v >= 0) ||
+      (value as number[]).reduce((a, b) => a + b, 0) !== 100
+    ) {
+      return { ok: false, error: "Trois pourcentages entiers dont la somme vaut 100." };
     }
     return { ok: true, value };
   }

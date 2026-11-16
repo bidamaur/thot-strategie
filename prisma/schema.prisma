@@ -106,6 +106,9 @@ model Match {
   stakeAmount          Decimal?         @db.Decimal(12, 2)
   stakeCommission      Decimal?         @db.Decimal(12, 2)
   ratingPool           String?
+  /// Match de tournoi joué par cette partie (résultat reporté par le serveur).
+  tournamentMatchId    String?          @unique
+  tournamentMatch      TournamentMatch? @relation(fields: [tournamentMatchId], references: [id], onDelete: SetNull)
   gameBet              GameBet?
   resultRecord         MatchResult?
   ratingHistory        RatingHistory[]
@@ -355,6 +358,7 @@ model TournamentMatch {
   tournament    Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   winner        User?                 @relation("TournamentMatchWinner", fields: [winnerId], references: [id])
   roundRef      TournamentRound?      @relation("TournamentRoundMatches", fields: [roundId], references: [id], onDelete: SetNull)
+  games         Match[]
 
   @@unique([tournamentId, stage, round, matchNumber])
   @@index([tournamentId, stage, round, status])

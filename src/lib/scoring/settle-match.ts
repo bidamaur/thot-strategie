@@ -178,7 +178,10 @@ function settleInTransaction(
         match.mode === MatchMode.CASUAL && match.rated ? MatchMode.RATED : match.mode;
 
       // ── 1. Points classiques ──────────────────────────────────────────
+      // Une partie de tournoi relève de l'économie du tournoi (inscription,
+      // prix, Survival) : elle ne modifie jamais directement les points classiques.
       const awardsClassic =
+        !match.tournamentMatchId &&
         rules["points.classic.enabled"] &&
         ((mode === MatchMode.CASUAL && rules["points.classic.casualAwards"]) ||
           (mode === MatchMode.RATED && rules["points.classic.ratedAwards"]));
@@ -506,9 +509,17 @@ function abortInTransaction(matchId: string): Promise<{ aborted: boolean }> {
           result: null,
           disconnectedPlayerId: null,
           disconnectedAt: null,
+          // Partie de tournoi annulée : le match pourra être relancé.
+          tournamentMatchId: null,
         },
       });
       if (claimed.count !== 1) return { aborted: false };
+      if (match.tournamentMatchId) {
+        await tx.tournamentMatch.updateMany({
+          where: { id: match.tournamentMatchId, status: "IN_PROGRESS" },
+          data: { status: "WAITING" },
+        });
+      }
 
       const players = [match.playerWhiteId, match.playerBlackId].filter(
         (id): id is string => Boolean(id),

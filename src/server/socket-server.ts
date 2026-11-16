@@ -14,6 +14,7 @@ import {
 import { escrowGameBet, InsufficientBetBalanceError } from "../lib/economy/game-bets";
 import { prisma } from "../lib/prisma";
 import { abortMatch, settleMatch } from "../lib/scoring/settle-match";
+import { reportTournamentGame } from "../lib/economy/tournaments";
 import { withSerializableRetry } from "../lib/db/retry";
 import { getSettings, peekSetting } from "../lib/settings/service";
 import {
@@ -69,6 +70,8 @@ interface ActiveMatch {
   timeControlMinutes: number | null;
   mode: GameMode;
   stakeAmount: number | null;
+  /** Tournoi auquel appartient la partie (résultat reporté automatiquement). */
+  tournamentId: string | null;
   whiteMoneyChange: number | null;
   blackMoneyChange: number | null;
   moves: OnlinePly[];
@@ -242,6 +245,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         ratingHistory: {
           select: { userId: true, newRating: true },
         },
+        tournamentMatch: { select: { tournamentId: true } },
       },
     });
     if (!stored?.playerBlackId || !stored.playerBlack) return null;
@@ -268,6 +272,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
        timeControlMinutes: stored.timeControlMinutes,
        mode: stored.mode,
        stakeAmount: stored.stakeAmount ? stored.stakeAmount.toNumber() : null,
+       tournamentId: stored.tournamentMatch?.tournamentId ?? null,
        whiteMoneyChange: null,
        blackMoneyChange: null,
        moves: Array.isArray(stored.movesHistory)
@@ -368,6 +373,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       stakeAmount: match.stakeAmount,
       timeControlMinutes: match.timeControlMinutes,
       chatEnabled: peekSetting("match.chatEnabled"),
+      tournamentId: match.tournamentId,
     });
   };
 
@@ -591,6 +597,12 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       match.blackEloBalance = result.blackEloBalance;
       match.whiteMoneyChange = result.whiteMoneyChange;
       match.blackMoneyChange = result.blackMoneyChange;
+      if (match.tournamentId) {
+        // Le serveur reporte lui-même le résultat dans le tableau du tournoi.
+        await reportTournamentGame(match.matchId).catch((error: unknown) =>
+          console.error("Report du résultat de tournoi impossible (réconciliation ultérieure) :", error),
+        );
+      }
       match.drawOfferById = null;
       for (const timer of match.reconnectTimers.values()) clearTimeout(timer);
       match.reconnectTimers.clear();
@@ -1075,6 +1087,12 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       });
       return;
     }
+    if (match.tournamentId) {
+      socket.emit("server_error", {
+        message: "Pas de revanche dans un tournoi : la suite se joue depuis la page du tournoi.",
+      });
+      return;
+    }
 
     let requests = rematchRequests.get(matchId);
     if (!requests) {
@@ -1154,6 +1172,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
          timeControlMinutes: match.timeControlMinutes,
          mode: match.mode,
          stakeAmount: match.stakeAmount,
+         tournamentId: null,
          whiteMoneyChange: null,
          blackMoneyChange: null,
          moves: [],
@@ -1351,6 +1370,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       timeControlMinutes: self.timeControlMinutes,
       mode: self.mode,
       stakeAmount: self.mode === "MONEY" ? self.stake : null,
+      tournamentId: null,
       whiteMoneyChange: null,
       blackMoneyChange: null,
       moves: [],
@@ -1763,6 +1783,10 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         socket.emit("server_error", {
           message: "Une partie rémunérée a déjà une mise fixée : aucun défi supplémentaire possible.",
         });
+        return;
+      }
+      if (match.tournamentId) {
+        socket.emit("server_error", { message: "Pas de défi en points pendant une partie de tournoi." });
         return;
       }
       if (!peekSetting("points.classic.friendlyStakesEnabled")) {

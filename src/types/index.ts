@@ -124,6 +124,7 @@ export interface ServerToClientEvents {
     rating?: number | null;
     opponentRating?: number | null;
     chatEnabled?: boolean;
+    tournamentId?: string | null;
   }) => void;
   move_accepted: (payload: {
     matchId: string;

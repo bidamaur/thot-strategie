@@ -4,6 +4,7 @@ import {
   recordValidatedTournamentResult,
 } from "@/lib/economy/tournaments";
 import { prisma } from "@/lib/prisma";
+import { writeAuditLog } from "@/lib/audit";
 import { NextResponse } from "next/server";
 
 interface RouteContext {
@@ -30,10 +31,11 @@ export async function POST(request: Request, { params }: RouteContext) {
     typeof body !== "object" ||
     body === null ||
     !("winnerId" in body) ||
-    typeof body.winnerId !== "string"
+    (typeof body.winnerId !== "string" && body.winnerId !== null)
   ) {
-    return NextResponse.json({ error: "Vainqueur requis." }, { status: 400 });
+    return NextResponse.json({ error: "Vainqueur requis (ou null pour une nulle)." }, { status: 400 });
   }
+  const winnerId = body.winnerId as string | null;
 
   try {
     const match = await prisma.tournamentMatch.findUnique({
@@ -43,36 +45,51 @@ export async function POST(request: Request, { params }: RouteContext) {
         tournamentId: true,
         playerWhiteId: true,
         playerBlackId: true,
+        tournament: { select: { creatorId: true } },
+        games: { where: { status: "IN_PROGRESS" }, select: { id: true }, take: 1 },
       },
     });
     if (!match || match.tournamentId !== tournamentId) {
       return NextResponse.json({ error: "Match introuvable." }, { status: 404 });
     }
-    if (
-      !currentUser.isAdmin &&
-      currentUser.id !== match.playerWhiteId &&
-      currentUser.id !== match.playerBlackId
-    ) {
+    const isPlayer = currentUser.id === match.playerWhiteId || currentUser.id === match.playerBlackId;
+    // Arbitre : administrateur, ou organisateur qui ne joue pas ce match.
+    const isArbiter =
+      currentUser.isAdmin || (currentUser.id === match.tournament.creatorId && !isPlayer);
+    if (!isArbiter && !isPlayer) {
       return NextResponse.json(
-        { error: "Seuls les joueurs du match ou un administrateur peuvent valider son résultat." },
+        { error: "Seuls les joueurs du match, l’organisateur ou un administrateur peuvent agir sur ce résultat." },
         { status: 403 },
       );
     }
-
-    // Un joueur ne peut jamais se déclarer lui-même vainqueur : il peut
-    // uniquement reconnaître la victoire de son adversaire. Tout autre
-    // arbitrage relève d'un administrateur.
-    if (!currentUser.isAdmin && body.winnerId === currentUser.id) {
+    // Un joueur ne peut que reconnaître la victoire de son adversaire.
+    if (!isArbiter && (winnerId === null || winnerId === currentUser.id)) {
       return NextResponse.json(
-        { error: "Vous ne pouvez déclarer que la victoire de votre adversaire. Contactez un arbitre en cas de litige." },
+        { error: "Vous pouvez seulement concéder la victoire à votre adversaire. Contactez l’organisateur en cas de litige." },
         { status: 403 },
       );
     }
-    if (body.winnerId !== match.playerWhiteId && body.winnerId !== match.playerBlackId) {
+    if (winnerId !== null && winnerId !== match.playerWhiteId && winnerId !== match.playerBlackId) {
       return NextResponse.json({ error: "Le vainqueur doit être un joueur du match." }, { status: 400 });
     }
+    if (match.games[0]) {
+      return NextResponse.json(
+        { error: "Une partie en ligne est en cours pour ce match : son résultat sera reporté automatiquement." },
+        { status: 409 },
+      );
+    }
 
-    await recordValidatedTournamentResult(matchId, body.winnerId);
+    await recordValidatedTournamentResult(matchId, winnerId);
+    if (isArbiter) {
+      await writeAuditLog(prisma, {
+        actorId: currentUser.id,
+        action: "TOURNAMENT_RESULT_ARBITRATED",
+        entity: "TournamentMatch",
+        entityId: matchId,
+        after: { winnerId, tournamentId },
+      });
+    }
+
     const updatedMatch = await prisma.tournamentMatch.findUniqueOrThrow({
       where: { id: matchId },
     });
