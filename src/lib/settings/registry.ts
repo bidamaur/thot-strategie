@@ -349,6 +349,7 @@ export const SETTING_DEFINITIONS = [
   { key: "tournaments.roundRobinMaxPlayers", category: "tournaments", type: "number", default: 20, min: 3, max: 40, integer: true, label: "Joueurs max. en toutes rondes / ligue" },
   { key: "tournaments.gamesRated", category: "tournaments", type: "boolean", default: true, label: "Les parties de tournoi comptent pour l'ELO" },
   { key: "tournaments.prizeSplitPercent", category: "tournaments", type: "json", default: [50, 30, 20], label: "Répartition des prix (1er, 2e, 3e) en %", description: "Trois pourcentages dont la somme vaut 100." },
+  { key: "tournaments.noShowForfeitMinutes", category: "tournaments", type: "number", default: 5, min: 0, max: 120, integer: true, label: "Forfait si l'adversaire ne rejoint pas la partie (0 = désactivé)", unit: "min" },
   { key: "tournaments.freezeRulesOnStart", category: "tournaments", type: "boolean", default: true, label: "Figer les règles au démarrage", description: "Les paramètres sont copiés dans le tournoi à son lancement et ne changent plus." },
 
   // ── Survival ─────────────────────────────────────────────────────────
@@ -356,6 +357,10 @@ export const SETTING_DEFINITIONS = [
   { key: "survival_bank_initial_capital", category: "survival", type: "number", default: 500, min: 1, max: 1_000_000, integer: true, label: "Capital initial", unit: "pts" },
   { key: "survival_bank_min_bet", category: "survival", type: "number", default: 10, min: 1, max: 1_000_000, integer: true, label: "Mise minimale", unit: "pts" },
   { key: "survival_bank_max_bet", category: "survival", type: "number", default: 100, min: 1, max: 1_000_000, integer: true, label: "Mise maximale", unit: "pts" },
+  { key: "survival.defaultDurationDays", category: "survival", type: "number", default: 7, min: 1, max: 365, integer: true, label: "Durée par défaut", unit: "jours" },
+  { key: "survival.maxDurationDays", category: "survival", type: "number", default: 60, min: 1, max: 365, integer: true, label: "Durée maximale", unit: "jours" },
+  { key: "survival.moneyEntryEnabled", category: "survival", type: "boolean", default: true, critical: true, label: "Survival avec inscription en points argent", description: "Nécessite aussi « Tournois payants actifs » et un niveau Premium autorisant les tournois payants." },
+  { key: "survival.moneyGainCommissionPercent", category: "survival", type: "number", default: 10, min: 0, max: 50, label: "Commission sur les gains nets (Survival argent)", unit: "%", critical: true, description: "Prélevée à la clôture uniquement sur la part gagnée au-delà de la mise d'entrée." },
   { key: "survival_bank_rebuy_enabled", category: "survival", type: "boolean", default: false, label: "Réintégration autorisée par défaut" },
   { key: "survival_bank_rebuy_cost", category: "survival", type: "number", default: 0, min: 0, max: 1_000_000, integer: true, label: "Coût de réintégration", unit: "pts" },
 

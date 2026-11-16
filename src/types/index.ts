@@ -151,7 +151,7 @@ export interface ServerToClientEvents {
     opponentPointsChange: number;
     opponentPointsBalance: number;
     status: "FINISHED" | "ABANDONED" | "ABORTED";
-    reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT" | "ABORTED";
+    reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT" | "ABORTED" | "NO_SHOW";
     mode?: GameMode;
     moneyChange?: number;
     moneyStake?: number | null;

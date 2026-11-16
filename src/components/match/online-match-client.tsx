@@ -84,7 +84,8 @@ interface MatchState {
     | "RESIGNATION"
     | "DISCONNECT_FORFEIT"
     | "TIME_OUT"
-    | "ABORTED";
+    | "ABORTED"
+    | "NO_SHOW";
 }
 
 interface OnlineMatchClientProps {
@@ -782,6 +783,10 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
           ? match.winnerId === match.playerId
             ? "Votre adversaire a dépassé le temps imparti."
             : "Vous avez dépassé le temps imparti."
+          : match.finishReason === "NO_SHOW"
+            ? match.winnerId === match.playerId
+              ? "Votre adversaire ne s’est pas présenté : victoire par forfait."
+              : "Vous ne vous êtes pas présenté à temps : défaite par forfait."
           : match.finishReason === "DRAW_OFFER"
             ? "La proposition de match nul a été acceptée."
             : "Le résultat de la partie a été enregistré côté serveur.";

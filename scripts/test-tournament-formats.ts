@@ -4,6 +4,8 @@
  */
 import { MatchStatus, TournamentType } from "@/generated/prisma-client";
 import {
+  closeExpiredSurvivals,
+  voteSurvivalStop,
   createTournament,
   getTournamentStandings,
   recordValidatedTournamentResult,
@@ -39,8 +41,16 @@ async function players(n: number, prefix: string) {
   return list;
 }
 
-async function makeTournament(type: TournamentType, size: number, prefix: string) {
+async function makeTournament(
+  type: TournamentType,
+  size: number,
+  prefix: string,
+  extra: Partial<Parameters<typeof createTournament>[0]> = {},
+) {
   const people = await players(size, prefix);
+  if (extra.isPaid) {
+    await prisma.user.updateMany({ where: { id: { in: people.map((x) => x.id) } }, data: { walletReal: 1000 } });
+  }
   const tournament = await createTournament({
     creatorId: people[0]!.id,
     name: `${tag} ${type}`,
@@ -54,6 +64,7 @@ async function makeTournament(type: TournamentType, size: number, prefix: string
     maxPlayers: size,
     betMode: "FIXED",
     rebuyEnabled: false,
+    ...extra,
   });
   tournamentIds.push(tournament.id);
   for (const p of people.slice(1)) await registerTournamentPlayer(tournament.id, p.id);
@@ -164,7 +175,98 @@ async function main() {
   }
 }
 
+async function survivalScenarios() {
+  console.log("4. Survival en points : mise d’inscription 50, on joue jusqu’à épuisement du capital");
+  {
+    const { tournament, people } = await makeTournament(TournamentType.SURVIVAL_BANK, 4, "v", {
+      entryPoints: 50,
+      minBet: 25,
+      maxBet: 25,
+      durationDays: 3,
+    });
+    const afterEntry = await prisma.user.findMany({ where: { id: { in: people.map((x) => x.id) } } });
+    check("chaque inscrit est débité de 50 points", afterEntry.every((u) => u.pointsFree === 50));
+    const started = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+    check("démarrage quand les 4 places sont prises", started.status === "IN_PROGRESS");
+    check("date de fin = démarrage + 3 jours", Math.round((started.endsAt!.getTime() - started.startedAt!.getTime()) / 86_400_000) === 3);
+
+    await playOutRound(tournament.id, false);
+    const wallets1 = await prisma.tournamentWallet.findMany({ where: { tournamentId: tournament.id } });
+    check("après la ronde 1 : deux joueurs à 75, deux à 25, tous encore en jeu",
+      wallets1.filter((w) => w.capital === 75).length === 2 && wallets1.filter((w) => w.capital === 25).length === 2 &&
+      wallets1.every((w) => w.status === "ACTIVE"));
+    const round2 = await prisma.tournamentMatch.count({ where: { tournamentId: tournament.id, round: 2 } });
+    check("une 2e ronde est créée (pas d’élimination sur une simple défaite)", round2 === 2);
+
+    for (let guard = 0; guard < 20; guard += 1) {
+      const t = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+      if (t.status === "COMPLETED") break;
+      await playOutRound(tournament.id, false);
+    }
+    const done = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+    check("le tournoi s’arrête quand il reste un seul joueur", done.status === "COMPLETED");
+    const final = await prisma.user.findMany({ where: { id: { in: people.map((x) => x.id) } } });
+    const total = final.reduce((sum, u) => sum + u.pointsFree, 0);
+    check("aucun point créé ni perdu (4 × 100 au total)", total === 400, total);
+    const winner = final.find((u) => u.id === done.winnerId)!;
+    check("le survivant récupère tout le capital (100 + 150)", winner.pointsFree === 250, winner.pointsFree);
+    const ledger = await prisma.balanceTransaction.count({ where: { referenceId: `survival:${tournament.id}` } });
+    check("restitution inscrite dans l’historique des soldes", ledger >= 1);
+  }
+
+  console.log("5. Survival : arrêt anticipé seulement avec l’accord de tous");
+  {
+    const { tournament, people } = await makeTournament(TournamentType.SURVIVAL_BANK, 4, "w", {
+      entryPoints: 50,
+      minBet: 10,
+      maxBet: 10,
+    });
+    await playOutRound(tournament.id, false);
+    let result = { stopped: false, votes: 0, required: 0 };
+    for (const p of people.slice(0, 3)) result = await voteSurvivalStop(tournament.id, p.id, true);
+    check("3 accords sur 4 : le tournoi continue", !result.stopped && result.votes === 3 && result.required === 4);
+    await voteSurvivalStop(tournament.id, people[1]!.id, false);
+    await voteSurvivalStop(tournament.id, people[1]!.id, true);
+    result = await voteSurvivalStop(tournament.id, people[3]!.id, true);
+    check("unanimité : arrêt immédiat", result.stopped);
+    const final = await prisma.user.findMany({ where: { id: { in: people.map((x) => x.id) } } });
+    check("chacun garde ce qu’il a gagné (60 ou 40 rendus)",
+      final.filter((u) => u.pointsFree === 110).length === 2 && final.filter((u) => u.pointsFree === 90).length === 2,
+      final.map((u) => u.pointsFree));
+  }
+
+  console.log("6. Survival : arrêt automatique à la fin de la durée");
+  {
+    const { tournament } = await makeTournament(TournamentType.SURVIVAL_BANK, 4, "e", { entryPoints: 20, minBet: 5, maxBet: 5, durationDays: 1 });
+    await prisma.tournament.update({ where: { id: tournament.id }, data: { endsAt: new Date(Date.now() - 1000) } });
+    await closeExpiredSurvivals();
+    const t = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+    check("tournoi clôturé à échéance", t.status === "COMPLETED");
+  }
+
+  console.log("7. Survival en points argent : inscription 500 FCFA, commission sur le gain net uniquement");
+  {
+    const { tournament, people } = await makeTournament(TournamentType.SURVIVAL_BANK, 4, "m", {
+      isPaid: true,
+      entryFeeCfa: 500,
+      entryPoints: 0,
+      minBet: 100,
+      maxBet: 100,
+    });
+    const debited = await prisma.user.findMany({ where: { id: { in: people.map((x) => x.id) } } });
+    check("500 FCFA débités, points classiques intacts", debited.every((u) => u.walletReal.toNumber() === 500 && u.pointsFree === 100));
+    await playOutRound(tournament.id, false);
+    for (const p of people) await voteSurvivalStop(tournament.id, p.id, true);
+    const final = await prisma.user.findMany({ where: { id: { in: people.map((x) => x.id) } } });
+    const winners = final.filter((u) => u.walletReal.toNumber() === 1090);
+    const losers = final.filter((u) => u.walletReal.toNumber() === 900);
+    check("gagnants : 500 + 600 − 10 % de 100 = 1090 ; perdants : 900", winners.length === 2 && losers.length === 2,
+      final.map((u) => u.walletReal.toString()));
+  }
+}
+
 main()
+  .then(() => survivalScenarios())
   .catch((error) => {
     failures += 1;
     console.error("Erreur inattendue :", error);

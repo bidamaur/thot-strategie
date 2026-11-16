@@ -17,6 +17,11 @@ import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings/service";
 import { withSerializableRetry } from "@/lib/db/retry";
 import {
+  survivalPairings,
+  survivalPayout,
+  survivalRanking,
+} from "@/lib/tournament/survival-rounds";
+import {
   computeStandings,
   roundRobinSchedule,
   swissPairings,
@@ -25,7 +30,7 @@ import {
 } from "@/lib/tournament/standings";
 
 /** Formats en tableau à élimination (puissance de 2). */
-const BRACKET_TYPES = new Set<TournamentType>([TournamentType.ELIMINATION, TournamentType.SURVIVAL_BANK]);
+const BRACKET_TYPES = new Set<TournamentType>([TournamentType.ELIMINATION]);
 /** Formats à points, classés par score et départages. */
 const STANDINGS_TYPES = new Set<TournamentType>([
   TournamentType.SWISS,
@@ -33,7 +38,11 @@ const STANDINGS_TYPES = new Set<TournamentType>([
   TournamentType.LEAGUE,
 ]);
 /** Formats jouables de bout en bout. */
-export const PLAYABLE_TOURNAMENT_TYPES = new Set<TournamentType>([...BRACKET_TYPES, ...STANDINGS_TYPES]);
+export const PLAYABLE_TOURNAMENT_TYPES = new Set<TournamentType>([
+  ...BRACKET_TYPES,
+  ...STANDINGS_TYPES,
+  TournamentType.SURVIVAL_BANK,
+]);
 
 export function isStandingsFormat(type: TournamentType): boolean {
   return STANDINGS_TYPES.has(type);
@@ -88,6 +97,8 @@ export interface CreateTournamentInput {
   visibility?: "PUBLIC" | "PRIVATE" | "CLUB";
   clubId?: string | null;
   description?: string | null;
+  /** Survival : durée en jours avant arrêt automatique. */
+  durationDays?: number;
 }
 
 async function assertCapacity(maxPlayers: number, type: TournamentType): Promise<void> {
@@ -147,7 +158,7 @@ async function retrySerializable<T>(operation: () => Promise<T>): Promise<T> {
 
 export async function createTournament(input: CreateTournamentInput) {
   await assertCapacity(input.maxPlayers, input.type);
-  if (input.invitedUserIds !== undefined) {
+  if (input.invitedUserIds?.length) {
     if (
       input.isPaid ||
       input.invitedUserIds.length > input.maxPlayers - 1 ||
@@ -160,9 +171,27 @@ export async function createTournament(input: CreateTournamentInput) {
       );
     }
   }
-  if (input.type === TournamentType.SURVIVAL_BANK && input.isPaid) {
+  const survivalSettings = await getSettings([
+    "survival.moneyEntryEnabled",
+    "survival.defaultDurationDays",
+    "survival.maxDurationDays",
+  ] as const);
+  if (input.type === TournamentType.SURVIVAL_BANK && input.isPaid && !survivalSettings["survival.moneyEntryEnabled"]) {
     throw new TournamentEconomyError(
-      "Le mode Survival Bank utilise uniquement des points gratuits.",
+      "Le Survival en points argent est désactivé par l’administration.",
+      "INVALID_INPUT",
+    );
+  }
+  const durationDays =
+    input.type === TournamentType.SURVIVAL_BANK
+      ? input.durationDays ?? survivalSettings["survival.defaultDurationDays"]
+      : null;
+  if (
+    durationDays !== null &&
+    (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > survivalSettings["survival.maxDurationDays"])
+  ) {
+    throw new TournamentEconomyError(
+      `La durée doit être comprise entre 1 et ${survivalSettings["survival.maxDurationDays"]} jours.`,
       "INVALID_INPUT",
     );
   }
@@ -183,12 +212,14 @@ export async function createTournament(input: CreateTournamentInput) {
       );
     }
   }
+  // Capital de départ d'un Survival = la mise d'inscription (points ou FCFA).
+  const survivalCapital = input.isPaid ? input.entryFeeCfa : input.entryPoints;
   if (input.type === TournamentType.SURVIVAL_BANK) {
     const minBet = input.minBet ?? 1;
-    const maxBet = input.maxBet ?? input.entryPoints;
+    const maxBet = input.maxBet ?? survivalCapital;
     assertFee(minBet, "La mise minimale par match", 1);
     assertFee(maxBet, "La mise maximale par match", 1);
-    if (minBet > maxBet || maxBet > input.entryPoints) {
+    if (minBet > maxBet || maxBet > survivalCapital) {
       throw new TournamentEconomyError(
         "Les mises doivent respecter la limite minimale, la limite maximale et le capital d’entrée.",
         "INVALID_INPUT",
@@ -245,11 +276,12 @@ export async function createTournament(input: CreateTournamentInput) {
             maxElo: input.maxElo,
             minPoints: input.minPoints,
             maxPoints: input.maxPoints,
-            initialCapital: survivalBankEnabled ? input.entryPoints : input.initialCapital,
+            initialCapital: survivalBankEnabled ? survivalCapital : input.initialCapital,
             minBet: survivalBankEnabled ? (input.minBet ?? 1) : input.minBet,
             maxBet: survivalBankEnabled
-              ? (input.maxBet ?? input.entryPoints)
+              ? (input.maxBet ?? survivalCapital)
               : input.maxBet,
+            durationDays,
             betMode: input.betMode,
             survivalBankEnabled,
             rebuyEnabled: input.rebuyEnabled,
@@ -311,6 +343,11 @@ async function createOpeningRound(
 ): Promise<void> {
   const sorted = [...participants].sort((a, b) => a.seed - b.seed);
 
+  if (type === TournamentType.SURVIVAL_BANK) {
+    await createSurvivalRound(transaction, tournamentId, 1);
+    return;
+  }
+
   if (type === TournamentType.ROUND_ROBIN || type === TournamentType.LEAGUE) {
     // Calendrier complet généré d'emblée : les parties peuvent se jouer
     // dans n'importe quel ordre.
@@ -354,6 +391,183 @@ async function createOpeningRound(
       status: TournamentMatchStatus.WAITING,
     })),
   });
+}
+
+/**
+ * Survival : crée la ronde suivante entre les joueurs encore actifs.
+ * La mise de chaque partie est fixée à la création de la ronde.
+ */
+async function createSurvivalRound(
+  transaction: Prisma.TransactionClient,
+  tournamentId: string,
+  round: number,
+): Promise<number> {
+  const [tournament, wallets, previous] = await Promise.all([
+    transaction.tournament.findUniqueOrThrow({
+      where: { id: tournamentId },
+      select: { minBet: true, maxBet: true, betMode: true },
+    }),
+    transaction.tournamentWallet.findMany({
+      where: { tournamentId, status: TournamentParticipantStatus.ACTIVE },
+      select: { userId: true, capital: true },
+    }),
+    transaction.tournamentMatch.findMany({
+      where: { tournamentId },
+      select: { round: true, playerWhiteId: true, playerBlackId: true },
+    }),
+  ]);
+  const lastRound = round - 1;
+  const lastOpponent = new Map<string, string>();
+  const byes = new Map<string, number>();
+  for (const m of previous) {
+    if (!m.playerWhiteId) continue;
+    if (m.playerBlackId === null) {
+      byes.set(m.playerWhiteId, (byes.get(m.playerWhiteId) ?? 0) + 1);
+    } else if (m.round === lastRound) {
+      lastOpponent.set(m.playerWhiteId, m.playerBlackId);
+      lastOpponent.set(m.playerBlackId, m.playerWhiteId);
+    }
+  }
+  const minBet = tournament.minBet ?? 1;
+  const pairings = survivalPairings(
+    wallets.map((w) => ({
+      userId: w.userId,
+      capital: w.capital,
+      lastOpponentId: lastOpponent.get(w.userId) ?? null,
+      byes: byes.get(w.userId) ?? 0,
+    })),
+    { mode: tournament.betMode, minBet, maxBet: tournament.maxBet ?? minBet },
+  );
+  const games = pairings.filter((p) => p.blackId !== null);
+  if (games.length === 0) return 0;
+  const now = new Date();
+  await transaction.tournamentMatch.createMany({
+    data: pairings.map((pairing, index) => ({
+      tournamentId,
+      stage: TournamentMatchStage.MAIN,
+      round,
+      matchNumber: index + 1,
+      playerWhiteId: pairing.whiteId,
+      playerBlackId: pairing.blackId,
+      betAmount: pairing.blackId ? pairing.stake : null,
+      // Repos : aucune mise, aucun point.
+      ...(pairing.blackId === null
+        ? { status: TournamentMatchStatus.FINISHED, completedAt: now }
+        : { status: TournamentMatchStatus.WAITING }),
+    })),
+  });
+  return games.length;
+}
+
+async function advanceSurvival(
+  transaction: Prisma.TransactionClient,
+  tournamentId: string,
+  round: number,
+): Promise<void> {
+  const pending = await transaction.tournamentMatch.count({
+    where: { tournamentId, round, status: { not: TournamentMatchStatus.FINISHED } },
+  });
+  if (pending > 0) return;
+  const tournament = await transaction.tournament.findUniqueOrThrow({
+    where: { id: tournamentId },
+    select: { endsAt: true },
+  });
+  const expired = tournament.endsAt !== null && tournament.endsAt <= new Date();
+  if (!expired) {
+    const created = await createSurvivalRound(transaction, tournamentId, round + 1);
+    if (created > 0) return;
+  }
+  // Un seul survivant, plus aucune partie possible, ou date de fin atteinte.
+  await closeSurvival(transaction, tournamentId);
+}
+
+async function closeSurvival(transaction: Prisma.TransactionClient, tournamentId: string): Promise<void> {
+  const wallets = await transaction.tournamentWallet.findMany({
+    where: { tournamentId },
+    select: { userId: true, capital: true, eliminatedAt: true },
+  });
+  await closeTournament(transaction, tournamentId, survivalRanking(wallets));
+}
+
+export class SurvivalStopError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "SurvivalStopError";
+  }
+}
+
+/**
+ * Vote d'arrêt anticipé d'un Survival. Le tournoi s'arrête dès que TOUS les
+ * joueurs encore actifs ont voté pour ; chacun garde alors son capital.
+ */
+export async function voteSurvivalStop(
+  tournamentId: string,
+  userId: string,
+  agree: boolean,
+): Promise<{ stopped: boolean; votes: number; required: number }> {
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const tournament = await tx.tournament.findUnique({
+          where: { id: tournamentId },
+          select: { type: true, status: true },
+        });
+        if (!tournament || tournament.type !== TournamentType.SURVIVAL_BANK) {
+          throw new SurvivalStopError("Tournoi Survival introuvable.", 404);
+        }
+        if (tournament.status !== TournamentStatus.IN_PROGRESS) {
+          throw new SurvivalStopError("Le tournoi n’est pas en cours.", 409);
+        }
+        const active = await tx.tournamentWallet.findMany({
+          where: { tournamentId, status: TournamentParticipantStatus.ACTIVE },
+          select: { userId: true },
+        });
+        if (!active.some((w) => w.userId === userId)) {
+          throw new SurvivalStopError("Seuls les joueurs encore en jeu peuvent voter.", 403);
+        }
+        if (agree) {
+          await tx.tournamentStopVote.upsert({
+            where: { tournamentId_userId: { tournamentId, userId } },
+            update: {},
+            create: { tournamentId, userId },
+          });
+        } else {
+          await tx.tournamentStopVote.deleteMany({ where: { tournamentId, userId } });
+        }
+        const activeIds = active.map((w) => w.userId);
+        const votes = await tx.tournamentStopVote.count({
+          where: { tournamentId, userId: { in: activeIds } },
+        });
+        if (votes >= activeIds.length) {
+          await closeSurvival(tx, tournamentId);
+          return { stopped: true, votes, required: activeIds.length };
+        }
+        return { stopped: false, votes, required: activeIds.length };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+}
+
+/** Arrête les Survival dont la durée est écoulée (appelé périodiquement). */
+export async function closeExpiredSurvivals(): Promise<number> {
+  const expired = await prisma.tournament.findMany({
+    where: {
+      type: TournamentType.SURVIVAL_BANK,
+      status: TournamentStatus.IN_PROGRESS,
+      endsAt: { lte: new Date() },
+    },
+    select: { id: true },
+    take: 50,
+  });
+  for (const { id } of expired) {
+    await withSerializableRetry(() =>
+      prisma.$transaction((tx) => closeSurvival(tx, id), {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      }),
+    ).catch((error) => console.error("Clôture Survival impossible :", error));
+  }
+  return expired.length;
 }
 
 /** Classement courant d'un tournoi à points. */
@@ -472,6 +686,7 @@ async function registerTournamentPlayerInTransaction(
       minPoints: true,
       maxPoints: true,
       survivalBankEnabled: true,
+      durationDays: true,
       visibility: true,
       clubId: true,
       creatorId: true,
@@ -605,12 +820,13 @@ async function registerTournamentPlayerInTransaction(
     data: { tournamentId, userId, seed },
   });
   if (tournament.survivalBankEnabled) {
+    const capital = tournament.isPaid ? tournament.entryFee.toNumber() : tournament.entryPoints;
     const wallet = await transaction.tournamentWallet.create({
       data: {
         tournamentId,
         userId,
-        capital: tournament.entryPoints,
-        initialCapital: tournament.entryPoints,
+        capital,
+        initialCapital: capital,
         status: TournamentParticipantStatus.ACTIVE,
       },
     });
@@ -620,8 +836,8 @@ async function registerTournamentPlayerInTransaction(
         tournamentId,
         userId,
         type: TournamentWalletTransactionType.DEPOSIT,
-        amount: tournament.entryPoints,
-        balanceAfter: tournament.entryPoints,
+        amount: capital,
+        balanceAfter: capital,
         referenceId: tournament.id,
         description: `Droit d’entrée placé dans le portefeuille du tournoi ${tournament.id}`,
       },
@@ -640,18 +856,26 @@ async function registerTournamentPlayerInTransaction(
       "points.classic.pieceBonusCap",
       "tournaments.swissRounds",
       "tournaments.prizeSplitPercent",
+      "survival.moneyGainCommissionPercent",
     ] as const);
     const feePercent = rules["platform_fee_percentage"];
-    const platformFee = tournament.isPaid
+    const isSurvival = tournament.type === TournamentType.SURVIVAL_BANK;
+    const platformFee = tournament.isPaid && !isSurvival
       ? gross.mul(new Prisma.Decimal(feePercent)).div(100).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
       : new Prisma.Decimal(0);
+    const startedAt = new Date();
     await transaction.tournament.update({
       where: { id: tournament.id },
       data: {
         status: TournamentStatus.IN_PROGRESS,
-        startedAt: new Date(),
-        totalPrizePool: gross.minus(platformFee),
+        startedAt,
+        // Survival : pas de cagnotte, les mises restent dans les portefeuilles.
+        totalPrizePool: isSurvival ? new Prisma.Decimal(0) : gross.minus(platformFee),
         platformFee,
+        endsAt:
+          isSurvival && tournament.durationDays
+            ? new Date(startedAt.getTime() + tournament.durationDays * 24 * 60 * 60 * 1000)
+            : null,
         // Règles figées : toute modification ultérieure des paramètres
         // n'affecte pas un tournoi déjà lancé.
         ...(rules["tournaments.freezeRulesOnStart"]
@@ -666,6 +890,7 @@ async function registerTournamentPlayerInTransaction(
                 pointsPieceBonusCap: rules["points.classic.pieceBonusCap"],
                 swissRounds: rules["tournaments.swissRounds"],
                 prizeSplitPercent: rules["tournaments.prizeSplitPercent"],
+                survivalGainCommissionPercent: rules["survival.moneyGainCommissionPercent"],
               },
             }
           : {}),
@@ -934,11 +1159,17 @@ async function closeTournament(
     const wallets = await transaction.tournamentWallet.findMany({
       where: { tournamentId },
     });
+    const frozenCommission = (tournament.configSnapshot as { survivalGainCommissionPercent?: number } | null)
+      ?.survivalGainCommissionPercent;
+    const commissionPercent = tournament.isPaid
+      ? frozenCommission ??
+        (await getSettings(["survival.moneyGainCommissionPercent"] as const))["survival.moneyGainCommissionPercent"]
+      : 0;
     for (const wallet of wallets) {
       await transaction.tournamentWallet.update({
         where: { id: wallet.id },
         data: {
-          ...(wallet.capital > 0 ? { capital: 0 } : {}),
+          capital: 0,
           status:
             wallet.userId === placements[0]!.userId
               ? TournamentParticipantStatus.WON
@@ -946,16 +1177,34 @@ async function closeTournament(
         },
       });
       if (wallet.capital <= 0) continue;
-      const newPoints = await transaction.user.updateMany({
-        where: { id: wallet.userId },
-        data: { pointsFree: { increment: wallet.capital } },
-      });
-      if (newPoints.count !== 1) {
-        throw new TournamentEconomyError(
-          "Impossible de restituer le solde de tournoi au joueur.",
-          "NOT_FOUND",
-        );
+      // Chacun récupère ce qu'il a dans son portefeuille de tournoi.
+      const { payout, commission } = survivalPayout(wallet.capital, wallet.initialCapital, commissionPercent);
+      if (tournament.isPaid) {
+        await transaction.user.update({
+          where: { id: wallet.userId },
+          data: { walletReal: { increment: new Prisma.Decimal(payout) } },
+        });
+      } else {
+        await transaction.user.update({
+          where: { id: wallet.userId },
+          data: { pointsFree: { increment: payout } },
+        });
       }
+      await transaction.balanceTransaction.create({
+        data: {
+          userId: wallet.userId,
+          balanceType: tournament.isPaid ? BalanceType.REAL_WALLET : BalanceType.FREE_POINTS,
+          transactionType: tournament.isPaid
+            ? BalanceTransactionType.TOURNAMENT_PRIZE
+            : BalanceTransactionType.TOURNAMENT_POINTS_PRIZE,
+          amount: new Prisma.Decimal(payout),
+          referenceId: `survival:${tournamentId}`,
+          description:
+            commission > 0
+              ? `Capital Survival restitué (commission ${commission} sur le gain)`
+              : "Capital Survival restitué",
+        },
+      });
       await transaction.tournamentWalletTransaction.create({
         data: {
           walletId: wallet.id,
@@ -965,7 +1214,7 @@ async function closeTournament(
           amount: -wallet.capital,
           balanceAfter: 0,
           referenceId: `tournament-finish:${tournamentId}`,
-          description: `Restitution du solde restant à la fin du tournoi ${tournamentId}`,
+          description: `Restitution du capital à la fin du tournoi ${tournamentId}`,
         },
       });
     }
@@ -1078,7 +1327,8 @@ export async function recordValidatedTournamentResult(
             "INVALID_RESULT",
           );
         }
-        if (winnerId === null && !standingsFormat) {
+        const survivalFormat = match.tournament.type === TournamentType.SURVIVAL_BANK;
+        if (winnerId === null && !standingsFormat && !survivalFormat) {
           throw new TournamentEconomyError(
             "Une élimination directe ne peut pas se terminer par une nulle : rejouez la partie.",
             "INVALID_RESULT",
@@ -1304,6 +1554,21 @@ export async function recordValidatedTournamentResult(
           }
         }
 
+        if (survivalFormat) {
+          if (winnerId === null) {
+            // Nulle : aucune mise ne change de main.
+            await transaction.tournamentWallet.updateMany({
+              where: {
+                tournamentId: match.tournamentId,
+                userId: { in: [match.playerWhiteId, match.playerBlackId] },
+              },
+              data: { matchesPlayed: { increment: 1 }, matchesDrawn: { increment: 1 } },
+            });
+          }
+          await advanceSurvival(transaction, match.tournamentId, match.round);
+          return;
+        }
+
         if (match.stage === TournamentMatchStage.THIRD_PLACE) {
           await finishTournament(transaction, match.tournamentId);
           return;
@@ -1521,7 +1786,10 @@ export async function reportTournamentGame(matchId: string): Promise<void> {
   if (game.status !== MatchStatus.FINISHED && game.status !== MatchStatus.ABANDONED) return;
   if (game.tournamentMatch.status === TournamentMatchStatus.FINISHED) return;
 
-  if (game.winnerId === null && !STANDINGS_TYPES.has(game.tournamentMatch.tournament.type)) {
+  const drawAllowed =
+    STANDINGS_TYPES.has(game.tournamentMatch.tournament.type) ||
+    game.tournamentMatch.tournament.type === TournamentType.SURVIVAL_BANK;
+  if (game.winnerId === null && !drawAllowed) {
     await prisma.$transaction([
       prisma.match.update({ where: { id: matchId }, data: { tournamentMatchId: null } }),
       prisma.tournamentMatch.update({

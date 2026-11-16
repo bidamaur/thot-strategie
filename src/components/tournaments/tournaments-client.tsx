@@ -101,6 +101,10 @@ export function TournamentsClient() {
   const [tournamentType, setTournamentType] = useState("SURVIVAL_BANK");
   const [tournamentScope, setTournamentScope] = useState("CITY");
   const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">("PUBLIC");
+  // Survival : monnaie de la mise d'inscription, durée et type de mise.
+  const [entryCurrency, setEntryCurrency] = useState<"POINTS" | "MONEY">("POINTS");
+  const [durationDays, setDurationDays] = useState("7");
+  const [betMode, setBetMode] = useState<"FIXED" | "VARIABLE">("FIXED");
   const [clubIdParam, setClubIdParam] = useState<string | null>(null);
   useEffect(() => {
     // Tournoi de club : /tournois?club=<id> depuis la page du club.
@@ -238,9 +242,13 @@ export function TournamentsClient() {
           name: tournamentName.trim() || undefined,
           type: tournamentType,
           scope: tournamentScope,
-          isPaid: false,
-          entryFeeCfa: 0,
-          entryPoints: requiredPoints,
+          // Survival en points argent : la mise d'inscription est débitée du
+          // portefeuille argent et devient le capital de jeu.
+          isPaid: tournamentType === "SURVIVAL_BANK" && entryCurrency === "MONEY",
+          entryFeeCfa: tournamentType === "SURVIVAL_BANK" && entryCurrency === "MONEY" ? requiredPoints : 0,
+          entryPoints: tournamentType === "SURVIVAL_BANK" && entryCurrency === "MONEY" ? 0 : requiredPoints,
+          durationDays: tournamentType === "SURVIVAL_BANK" ? Number(durationDays) : undefined,
+          betMode: tournamentType === "SURVIVAL_BANK" ? betMode : undefined,
           maxPlayers: playerCount,
           gameType: "CHECKERS",
           minElo: minElo ? Number(minElo) : undefined,
@@ -516,7 +524,7 @@ export function TournamentsClient() {
             </p>
             <p className="mt-2 text-sm leading-6 text-white/55">
               {tournamentType === "SURVIVAL_BANK"
-                ? "Le droit d’entrée est débité des points gratuits et conservé dans le portefeuille du tournoi. Le solde restant est restitué à la fin ; les gains et pertes de match restent dans ce portefeuille."
+                ? "Survival : la mise d’inscription est débitée à l’inscription et devient votre capital de jeu. On ne joue qu’avec ce capital ; dès qu’il passe sous la mise minimale, on est éliminé. Le tournoi s’arrête quand il reste un seul joueur, à la fin de la durée choisie, ou si tous les joueurs encore en jeu votent l’arrêt. Chacun récupère alors le capital qu’il possède."
                 : "Le droit d’entrée est débité des points gratuits à l’inscription. Le montant collecté est redistribué aux meilleurs joueurs à la fin du tournoi."}
             </p>
             <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -579,8 +587,24 @@ export function TournamentsClient() {
                   <option value="INTERNATIONAL">International</option>
                 </select>
               </label>
+              {tournamentType === "SURVIVAL_BANK" && (
+                <label className="text-sm text-white/70">
+                  Mise d’inscription en
+                  <select
+                    value={entryCurrency}
+                    onChange={(event) => setEntryCurrency(event.target.value as "POINTS" | "MONEY")}
+                    className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
+                  >
+                    <option value="POINTS">Points classiques</option>
+                    <option value="MONEY">Points argent (FCFA)</option>
+                  </select>
+                </label>
+              )}
               <label className="text-sm text-white/70">
-                Points requis pour entrer <span className="text-rose-300">*</span>
+                {tournamentType === "SURVIVAL_BANK"
+                  ? `Mise d’inscription = capital de jeu (${entryCurrency === "MONEY" ? "FCFA" : "points"})`
+                  : "Points requis pour entrer"}{" "}
+                <span className="text-rose-300">*</span>
                 <input
                   type="number"
                   min={1}
@@ -642,6 +666,21 @@ export function TournamentsClient() {
               </label>
               {tournamentType === "SURVIVAL_BANK" && (
                 <>
+                  <label className="text-sm text-white/70">
+                    Durée du tournoi (jours)
+                    <input type="number" min={1} max={365} step={1} value={durationDays} onChange={(event) => setDurationDays(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+                  </label>
+                  <label className="text-sm text-white/70">
+                    Mise par partie
+                    <select
+                      value={betMode}
+                      onChange={(event) => setBetMode(event.target.value as "FIXED" | "VARIABLE")}
+                      className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
+                    >
+                      <option value="FIXED">Fixe (= mise minimale)</option>
+                      <option value="VARIABLE">Variable (jusqu’à la mise maximale)</option>
+                    </select>
+                  </label>
                   <label className="text-sm text-white/70">
                     Mise minimale par match (optionnel)
                     <input type="number" min={1} step={1} value={minBet} onChange={(event) => setMinBet(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />

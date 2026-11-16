@@ -1,6 +1,7 @@
 import { MatchStatus } from "@/generated/prisma-client";
 import { getRequestUser } from "@/lib/auth/session";
 import {
+  closeExpiredSurvivals,
   getTournamentStandings,
   isStandingsFormat,
   reconcileTournamentGames,
@@ -18,6 +19,7 @@ export async function GET(request: Request, { params }: RouteContext) {
   try {
     // Reprise après incident : reporte les parties terminées non encore comptées.
     await reconcileTournamentGames(tournamentId);
+    await closeExpiredSurvivals();
 
     const tournament = await prisma.tournament.findUnique({
       where: { id: tournamentId },
@@ -31,6 +33,11 @@ export async function GET(request: Request, { params }: RouteContext) {
         invitations: currentUser
           ? { where: { userId: currentUser.id }, select: { status: true } }
           : false,
+        wallets: {
+          orderBy: { capital: "desc" },
+          include: { user: { select: { id: true, username: true } } },
+        },
+        stopVotes: { select: { userId: true } },
         bracketMatches: {
           orderBy: [{ round: "asc" }, { stage: "asc" }, { matchNumber: "asc" }],
           include: {
@@ -84,12 +91,25 @@ export async function GET(request: Request, { params }: RouteContext) {
         entryFee: tournament.entryFee.toString(),
         totalPrizePool: tournament.totalPrizePool.toString(),
         platformFee: tournament.platformFee.toString(),
+        wallets: tournament.wallets.map((w) => ({
+          userId: w.userId,
+          username: w.user.username,
+          capital: w.capital,
+          initialCapital: w.initialCapital,
+          status: w.status,
+          matchesPlayed: w.matchesPlayed,
+          matchesWon: w.matchesWon,
+          matchesLost: w.matchesLost,
+          matchesDrawn: w.matchesDrawn,
+          eliminatedAt: w.eliminatedAt,
+        })),
+        stopVotes: tournament.stopVotes.map((v) => v.userId),
         bracketMatches: tournament.bracketMatches.map(({ games, ...m }) => ({
           ...m,
           liveGameId: games[0]?.id ?? null,
         })),
       },
-      format: standings ? "STANDINGS" : "BRACKET",
+      format: tournament.type === "SURVIVAL_BANK" ? "SURVIVAL" : standings ? "STANDINGS" : "BRACKET",
       standings: standings?.map((row) => ({ ...row, username: names.get(row.userId) ?? "?" })) ?? null,
       viewer: currentUser
         ? {

@@ -14,7 +14,7 @@ import {
 import { escrowGameBet, InsufficientBetBalanceError } from "../lib/economy/game-bets";
 import { prisma } from "../lib/prisma";
 import { abortMatch, settleMatch } from "../lib/scoring/settle-match";
-import { reportTournamentGame } from "../lib/economy/tournaments";
+import { closeExpiredSurvivals, reportTournamentGame } from "../lib/economy/tournaments";
 import { withSerializableRetry } from "../lib/db/retry";
 import { getSettings, peekSetting } from "../lib/settings/service";
 import {
@@ -109,6 +109,9 @@ interface ActiveMatch {
   processingMove: boolean;
   processingAction: boolean;
   reconnectTimers: Map<string, NodeJS.Timeout>;
+  /** Joueurs ayant effectivement rejoint la partie (forfait si l'un ne vient jamais). */
+  joinedPlayerIds: Set<string>;
+  noShowTimer: NodeJS.Timeout | null;
 }
 
 const isGameType = (value: unknown): value is JoinQueuePayload["gameType"] =>
@@ -311,6 +314,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       processingMove: false,
       processingAction: false,
       reconnectTimers: new Map(),
+      joinedPlayerIds: new Set(),
+      noShowTimer: null,
     };
     matches.set(matchId, match);
     if (
@@ -497,10 +502,15 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       | "DRAW_OFFER"
       | "RESIGNATION"
       | "DISCONNECT_FORFEIT"
-      | "TIME_OUT",
+      | "TIME_OUT"
+      | "NO_SHOW",
   ): Promise<boolean> => {
     if (match.status !== "IN_PROGRESS" || match.processingAction) return false;
     match.processingAction = true;
+    if (match.noShowTimer) {
+      clearTimeout(match.noShowTimer);
+      match.noShowTimer = null;
+    }
     const turnTimeout = turnTimeouts.get(match.matchId);
     if (turnTimeout) clearTimeout(turnTimeout);
     turnTimeouts.delete(match.matchId);
@@ -529,6 +539,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       if (
         reason !== "GAME_OVER" &&
         reason !== "DRAW_OFFER" &&
+        reason !== "NO_SHOW" &&
         match.moves.length < abortThreshold
       ) {
         const { aborted } = await abortMatch(match.matchId);
@@ -571,7 +582,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       }
 
       const finalStatus =
-        reason === "RESIGNATION" || reason === "DISCONNECT_FORFEIT"
+        reason === "RESIGNATION" || reason === "DISCONNECT_FORFEIT" || reason === "NO_SHOW"
           ? MatchStatus.ABANDONED
           : MatchStatus.FINISHED;
 
@@ -1202,6 +1213,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         processingMove: false,
         processingAction: false,
         reconnectTimers: new Map(),
+      joinedPlayerIds: new Set(),
+      noShowTimer: null,
       };
       matches.set(nextMatchId, nextMatch);
       for (const participantId of match.playerIds) {
@@ -1400,6 +1413,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       processingMove: false,
       processingAction: false,
       reconnectTimers: new Map(),
+      joinedPlayerIds: new Set(),
+      noShowTimer: null,
     };
     matches.set(matchId, match);
     void selfSocket.join(matchId);
@@ -1453,6 +1468,39 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       });
   }, 2_000);
   sweepTimer.unref?.();
+
+  /**
+   * Partie de tournoi : si un seul joueur a rejoint la partie au bout du délai
+   * configuré, il gagne par forfait (le tournoi ne reste jamais bloqué).
+   */
+  const scheduleNoShowForfeit = (match: ActiveMatch): void => {
+    if (!match.tournamentId || match.status !== "IN_PROGRESS") return;
+    if (match.joinedPlayerIds.size >= 2) {
+      if (match.noShowTimer) clearTimeout(match.noShowTimer);
+      match.noShowTimer = null;
+      return;
+    }
+    if (match.noShowTimer || match.moves.length > 0) return;
+    const minutes = peekSetting("tournaments.noShowForfeitMinutes");
+    if (!minutes) return;
+    match.noShowTimer = setTimeout(() => {
+      match.noShowTimer = null;
+      if (match.status !== "IN_PROGRESS" || match.joinedPlayerIds.size !== 1 || match.moves.length > 0) return;
+      const presentId = [...match.joinedPlayerIds][0]!;
+      void finishMatch(match, presentId, "NO_SHOW").catch((error: unknown) =>
+        console.error("Forfait pour absence impossible :", error),
+      );
+    }, minutes * 60_000);
+    match.noShowTimer.unref?.();
+  };
+
+  // Arrêt automatique des Survival arrivés au terme de leur durée.
+  const survivalTimer = setInterval(() => {
+    void closeExpiredSurvivals().catch((error: unknown) =>
+      console.error("Clôture périodique des Survival impossible :", error),
+    );
+  }, 5 * 60_000);
+  survivalTimer.unref?.();
 
   const onConnection = (socket: GameSocket): void => {
     const { playerId } = socket.data;
@@ -1692,6 +1740,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
           joinedMatchSockets.set(playerId, socket.id);
           socketJoinedMatches.set(socket.id, match.matchId);
           sendMatchState(socket, match);
+          match.joinedPlayerIds.add(playerId);
+          scheduleNoShowForfeit(match);
           const opponentId = match.playerIds.find((id) => id !== playerId);
           if (opponentId) {
             connectedPlayers

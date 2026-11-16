@@ -217,7 +217,11 @@ export async function POST(request: Request) {
     visibility,
     clubId,
     description,
+    durationDays,
   } = fields;
+  if (durationDays !== undefined && (typeof durationDays !== "number" || !Number.isInteger(durationDays))) {
+    return NextResponse.json({ error: "Durée invalide." }, { status: 400 });
+  }
   const resolvedVisibility =
     visibility === "PRIVATE" || visibility === "CLUB" ? visibility : "PUBLIC";
   const resolvedClubId = typeof clubId === "string" && clubId ? clubId : null;
@@ -381,6 +385,7 @@ export async function POST(request: Request) {
       visibility: resolvedVisibility,
       clubId: resolvedClubId,
       description: resolvedDescription,
+      durationDays: typeof durationDays === "number" ? durationDays : undefined,
     });
 
     return NextResponse.json(

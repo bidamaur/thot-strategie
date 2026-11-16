@@ -59,6 +59,7 @@ model User {
   auditLogs                AuditLog[]
   clubsOwned               Club[]                  @relation("ClubOwner")
   clubMemberships          ClubMember[]
+  tournamentStopVotes      TournamentStopVote[]
 }
 
 model UserSession {
@@ -256,6 +257,10 @@ model Tournament {
   visibility           TournamentVisibility    @default(PUBLIC)
   clubId               String?
   description          String?                 @db.VarChar(1000)
+  /// Survival : durée en jours ; le tournoi s'arrête automatiquement à `endsAt`.
+  durationDays         Int?
+  endsAt               DateTime?
+  stopVotes            TournamentStopVote[]
   club                 Club?                   @relation(fields: [clubId], references: [id], onDelete: SetNull)
   creator              User                    @relation("TournamentCreator", fields: [creatorId], references: [id])
   invitations          TournamentInvitation[]
@@ -271,6 +276,7 @@ model Tournament {
   @@index([type])
   @@index([status, type])
   @@index([clubId])
+  @@index([status, endsAt])
 }
 
 model TournamentInvitation {
@@ -679,6 +685,18 @@ model Club {
 
   @@index([ownerId])
   @@index([country, city])
+}
+
+/// Survival : vote d'arrêt anticipé (le tournoi s'arrête si tous les joueurs actifs sont d'accord).
+model TournamentStopVote {
+  id           String     @id @default(cuid())
+  tournamentId String
+  userId       String
+  createdAt    DateTime   @default(now())
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, userId])
 }
 
 model ClubMember {

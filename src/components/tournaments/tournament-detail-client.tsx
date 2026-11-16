@@ -22,6 +22,19 @@ interface TournamentMatchRow {
   winner: PlayerRef | null;
   winnerId: string | null;
   liveGameId: string | null;
+  betAmount: number | null;
+}
+
+interface SurvivalWallet {
+  userId: string;
+  username: string;
+  capital: number;
+  initialCapital: number;
+  status: "ACTIVE" | "ELIMINATED" | "WON" | "WITHDRAWN";
+  matchesPlayed: number;
+  matchesWon: number;
+  matchesLost: number;
+  matchesDrawn: number;
 }
 
 interface Detail {
@@ -43,8 +56,15 @@ interface Detail {
     club: { name: string; slug: string } | null;
     participants: { userId: string; seed: number; placement: number | null; status: string; user: PlayerRef & { elo: number } }[];
     bracketMatches: TournamentMatchRow[];
+    wallets: SurvivalWallet[];
+    stopVotes: string[];
+    endsAt: string | null;
+    durationDays: number | null;
+    minBet: number | null;
+    maxBet: number | null;
+    betMode: "FIXED" | "VARIABLE";
   };
-  format: "STANDINGS" | "BRACKET";
+  format: "STANDINGS" | "BRACKET" | "SURVIVAL";
   standings:
     | { userId: string; username: string; rank: number; score: number; played: number; wins: number; draws: number; losses: number; byes: number; buchholz: number; sonnebornBerger: number }[]
     | null;
@@ -116,6 +136,26 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
       return;
     }
     router.push(`/match/${json.matchId}`);
+  }
+
+  async function voteStop(agree: boolean) {
+    if (agree && !window.confirm("Demander l’arrêt du tournoi ? Il s’arrêtera si tous les joueurs encore en jeu sont d’accord, et chacun gardera son capital.")) return;
+    setBusy("vote");
+    const response = await fetch(`/api/tournaments/${tournamentId}/stop-vote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agree }),
+    });
+    const json = await response.json().catch(() => ({}));
+    setBusy(null);
+    setNotice(
+      response.ok
+        ? json.stopped
+          ? "Tous les joueurs sont d’accord : le tournoi est arrêté, chacun garde son capital."
+          : `Vote enregistré (${json.votes}/${json.required}).`
+        : json.error ?? "Vote impossible.",
+    );
+    await load();
   }
 
   async function submitResult(match: TournamentMatchRow, winnerId: string | null, confirmText: string) {
@@ -203,6 +243,94 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
         </EmptyState>
       )}
 
+      {data.format === "SURVIVAL" && tournament.status !== "OPEN" && (() => {
+        const unit = tournament.isPaid ? "FCFA" : "pts";
+        const active = tournament.wallets.filter((w) => w.status === "ACTIVE");
+        const myWallet = tournament.wallets.find((w) => w.userId === viewer?.id);
+        const iVoted = viewer ? tournament.stopVotes.includes(viewer.id) : false;
+        const activeVotes = tournament.stopVotes.filter((id) => active.some((w) => w.userId === id)).length;
+        return (
+          <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+            <div className="card overflow-hidden">
+              <h2 className="px-5 pt-5 text-base font-semibold">Capitaux</h2>
+              <p className="px-5 text-xs text-ink-muted">
+                Chaque joueur ne joue qu’avec sa mise d’inscription. Sous {tournament.minBet ?? 1} {unit}, il est éliminé.
+                Mise par partie : {tournament.betMode === "FIXED" ? `${tournament.minBet ?? 1} ${unit}` : `variable, jusqu’à ${tournament.maxBet ?? "—"} ${unit}`}.
+              </p>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[420px] text-sm">
+                  <thead className="border-y border-line text-xs text-ink-muted">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-medium">Joueur</th>
+                      <th className="px-2 py-2 text-right font-medium">Capital</th>
+                      <th className="px-2 py-2 text-right font-medium">Bilan</th>
+                      <th className="px-2 py-2 text-right font-medium">V/N/D</th>
+                      <th className="px-4 py-2 text-right font-medium">État</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {tournament.wallets.map((w) => {
+                      const diff = w.capital - w.initialCapital;
+                      return (
+                        <tr key={w.userId} className={w.userId === viewer?.id ? "bg-accent/[0.06]" : ""}>
+                          <td className="px-4 py-2 font-medium">{w.username}</td>
+                          <td className="tabular px-2 py-2 text-right font-semibold">{w.capital} {unit}</td>
+                          <td className={`tabular px-2 py-2 text-right ${diff > 0 ? "text-accent" : diff < 0 ? "text-danger" : "text-ink-muted"}`}>
+                            {tournament.status === "COMPLETED" ? "—" : `${diff > 0 ? "+" : ""}${diff}`}
+                          </td>
+                          <td className="tabular px-2 py-2 text-right text-ink-muted">{w.matchesWon}/{w.matchesDrawn}/{w.matchesLost}</td>
+                          <td className="px-4 py-2 text-right text-xs">
+                            {w.status === "ACTIVE" ? <span className="text-accent">En jeu</span> : w.status === "WON" ? <span className="text-gold">Vainqueur</span> : <span className="text-ink-muted">Éliminé</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {tournament.endsAt && (
+                <div className="card p-4">
+                  <p className="eyebrow">Fin programmée</p>
+                  <p className="mt-1 text-sm font-semibold">
+                    {new Date(tournament.endsAt).toLocaleString("fr-FR", { dateStyle: "full", timeStyle: "short" })}
+                  </p>
+                  <p className="mt-1 text-xs text-ink-muted">
+                    Durée : {tournament.durationDays} jour{(tournament.durationDays ?? 0) > 1 ? "s" : ""}. À cette date, le tournoi s’arrête et chacun récupère son capital.
+                  </p>
+                </div>
+              )}
+              {tournament.status === "IN_PROGRESS" && (
+                <div className="card p-4">
+                  <p className="eyebrow">Arrêt anticipé</p>
+                  <p className="mt-1 text-sm">
+                    {activeVotes}/{active.length} joueur{active.length > 1 ? "s" : ""} en jeu d’accord pour arrêter.
+                  </p>
+                  <p className="mt-1 text-xs text-ink-muted">Le tournoi s’arrête seulement si tous les joueurs encore en jeu sont d’accord.</p>
+                  {myWallet?.status === "ACTIVE" && (
+                    <button
+                      type="button"
+                      disabled={busy === "vote"}
+                      onClick={() => voteStop(!iVoted)}
+                      className={`btn mt-3 w-full ${iVoted ? "btn-ghost" : "btn-danger"}`}
+                    >
+                      {iVoted ? "Retirer mon accord" : "Je veux arrêter le tournoi"}
+                    </button>
+                  )}
+                </div>
+              )}
+              {tournament.isPaid && (
+                <p className="card-muted px-4 py-3 text-xs text-ink-muted">
+                  Survival en points argent : une commission s’applique uniquement sur le gain net à la clôture.
+                </p>
+              )}
+            </div>
+          </section>
+        );
+      })()}
+
       <div className={`grid gap-4 ${data.format === "STANDINGS" ? "lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]" : ""}`}>
         {data.standings && tournament.status !== "OPEN" && (
           <section className="card self-start overflow-hidden">
@@ -258,7 +386,7 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
                             </span>
                             <span className="text-ink-muted"> vs </span>
                             {bye ? (
-                              <span className="text-ink-muted">exempt (1 pt)</span>
+                              <span className="text-ink-muted">{data.format === "SURVIVAL" ? "au repos" : "exempt (1 pt)"}</span>
                             ) : (
                               <span className={m.winnerId && m.winnerId === m.playerBlack?.id ? "font-semibold text-accent" : ""}>
                                 {m.playerBlack?.username ?? "—"}
@@ -266,6 +394,7 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
                             )}
                           </p>
                           <span className="text-xs text-ink-muted">
+                            {data.format === "SURVIVAL" && m.betAmount ? `Mise ${m.betAmount} · ` : ""}
                             {m.status === "FINISHED"
                               ? bye ? "" : m.winnerId ? `Gagné par ${m.winner?.username}` : "Nulle"
                               : m.liveGameId ? "Partie en cours" : "À jouer"}
@@ -303,7 +432,7 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
                                     {p.username}
                                   </button>
                                 ))}
-                                {data.format === "STANDINGS" && (
+                                {data.format !== "BRACKET" && (
                                   <button
                                     type="button"
                                     disabled={busy === m.id}
