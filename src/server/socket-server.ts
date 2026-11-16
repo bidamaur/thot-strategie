@@ -14,7 +14,7 @@ import {
 import { escrowGameBet, InsufficientBetBalanceError } from "../lib/economy/game-bets";
 import { prisma } from "../lib/prisma";
 import { abortMatch, settleMatch } from "../lib/scoring/settle-match";
-import { closeExpiredSurvivals, reportTournamentGame } from "../lib/economy/tournaments";
+import { closeExpiredTimedTournaments, reportTournamentGame } from "../lib/economy/tournaments";
 import { withSerializableRetry } from "../lib/db/retry";
 import { getSettings, peekSetting } from "../lib/settings/service";
 import {
@@ -1496,7 +1496,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
 
   // Arrêt automatique des Survival arrivés au terme de leur durée.
   const survivalTimer = setInterval(() => {
-    void closeExpiredSurvivals().catch((error: unknown) =>
+    void closeExpiredTimedTournaments().catch((error: unknown) =>
       console.error("Clôture périodique des Survival impossible :", error),
     );
   }, 5 * 60_000);

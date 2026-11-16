@@ -106,6 +106,7 @@ export function TournamentsClient() {
   const [entryCurrency, setEntryCurrency] = useState<"POINTS" | "MONEY">("POINTS");
   const [durationDays, setDurationDays] = useState("7");
   const [betMode, setBetMode] = useState<"FIXED" | "VARIABLE">("FIXED");
+  const [arenaMinutes, setArenaMinutes] = useState("60");
   const [clubIdParam, setClubIdParam] = useState<string | null>(null);
   useEffect(() => {
     // Tournoi de club : /tournois?club=<id> depuis la page du club.
@@ -250,6 +251,7 @@ export function TournamentsClient() {
           entryPoints: tournamentType === "SURVIVAL_BANK" && entryCurrency === "MONEY" ? 0 : requiredPoints,
           durationDays: tournamentType === "SURVIVAL_BANK" ? Number(durationDays) : undefined,
           betMode: tournamentType === "SURVIVAL_BANK" ? betMode : undefined,
+          durationMinutes: tournamentType === "ARENA" ? Number(arenaMinutes) : undefined,
           maxPlayers: playerCount,
           gameType: "CHECKERS",
           minElo: minElo ? Number(minElo) : undefined,
@@ -546,9 +548,12 @@ export function TournamentsClient() {
                   onChange={(event) => {
                     const next = event.target.value;
                     setTournamentType(next);
-                    // Les formats à élimination exigent une puissance de 2.
-                    if ((next === "ELIMINATION" || next === "SURVIVAL_BANK") && ![4, 8, 16, 32, 64].includes(Number(maxPlayers))) {
+                    // Les tableaux à élimination exigent une puissance de 2 ; les groupes, 6, 8, 16 ou 32.
+                    if ((next === "ELIMINATION" || next === "DOUBLE_ELIMINATION") && ![4, 8, 16, 32, 64].includes(Number(maxPlayers))) {
                       setMaxPlayers("4");
+                    }
+                    if (next === "GROUPS_ELIMINATION" && ![6, 8, 16, 32].includes(Number(maxPlayers))) {
+                      setMaxPlayers("8");
                     }
                   }}
                   className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
@@ -558,6 +563,9 @@ export function TournamentsClient() {
                   <option value="SWISS">Système suisse</option>
                   <option value="ROUND_ROBIN">Toutes rondes</option>
                   <option value="LEAGUE">Ligue aller-retour</option>
+                  <option value="GROUPS_ELIMINATION">Groupes + phase finale</option>
+                  <option value="DOUBLE_ELIMINATION">Double élimination</option>
+                  <option value="ARENA">Arena (durée limitée)</option>
                 </select>
               </label>
               <label className="text-sm text-white/70">
@@ -623,11 +631,13 @@ export function TournamentsClient() {
                   onChange={(event) => setMaxPlayers(event.target.value)}
                   className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
                 >
-                  {(tournamentType === "ELIMINATION" || tournamentType === "SURVIVAL_BANK"
+                  {(tournamentType === "ELIMINATION" || tournamentType === "DOUBLE_ELIMINATION"
                     ? [4, 8, 16, 32, 64]
-                    : tournamentType === "SWISS"
-                      ? [4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 32, 48, 64]
-                      : [4, 5, 6, 7, 8, 10, 12, 14, 16, 20]
+                    : tournamentType === "GROUPS_ELIMINATION"
+                      ? [6, 8, 16, 32]
+                      : tournamentType === "SWISS" || tournamentType === "ARENA" || tournamentType === "SURVIVAL_BANK"
+                        ? [4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 32, 48, 64]
+                        : [4, 5, 6, 7, 8, 10, 12, 14, 16, 20]
                   ).map((count) => (
                     <option key={count} value={count}>{count}</option>
                   ))}
@@ -665,6 +675,12 @@ export function TournamentsClient() {
                 Solde maximum de points (optionnel)
                 <input type="number" min={0} step={1} value={maxPoints} onChange={(event) => setMaxPoints(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
               </label>
+              {tournamentType === "ARENA" && (
+                <label className="text-sm text-white/70">
+                  Durée de l’Arena (minutes)
+                  <input type="number" min={10} max={1440} step={5} value={arenaMinutes} onChange={(event) => setArenaMinutes(event.target.value)} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
+                </label>
+              )}
               {tournamentType === "SURVIVAL_BANK" && (
                 <>
                   <label className="text-sm text-white/70">

@@ -4,6 +4,10 @@
  */
 import { MatchStatus, TournamentType } from "@/generated/prisma-client";
 import {
+  arenaSearch,
+  closeExpiredTimedTournaments,
+  getArenaStandings,
+  startTournamentNow,
   closeExpiredSurvivals,
   voteSurvivalStop,
   createTournament,
@@ -265,8 +269,164 @@ async function survivalScenarios() {
   }
 }
 
+async function playUntilDone(tournamentId: string, guardMax = 40) {
+  for (let guard = 0; guard < guardMax; guard += 1) {
+    const t = await prisma.tournament.findUniqueOrThrow({ where: { id: tournamentId } });
+    if (t.status === "COMPLETED") return true;
+    const pending = await prisma.tournamentMatch.findMany({
+      where: { tournamentId, status: { not: "FINISHED" } },
+      include: { playerWhite: { select: { elo: true } }, playerBlack: { select: { elo: true } } },
+      orderBy: [{ createdAt: "asc" }],
+    });
+    if (pending.length === 0) return false;
+    for (const m of pending) {
+      const whiteStronger = (m.playerWhite?.elo ?? 0) >= (m.playerBlack?.elo ?? 0);
+      await recordValidatedTournamentResult(m.id, whiteStronger ? m.playerWhiteId! : m.playerBlackId!);
+    }
+  }
+  return false;
+}
+
+async function advancedScenarios() {
+  console.log("8. Groupes + phase finale (8 joueurs : 2 groupes de 4, 4 qualifiés)");
+  {
+    const { tournament } = await makeTournament(TournamentType.GROUPS_ELIMINATION, 8, "g");
+    const groupMatches = await prisma.tournamentMatch.findMany({ where: { tournamentId: tournament.id, stage: "GROUP" } });
+    check("2 groupes × 6 parties", groupMatches.length === 12 && new Set(groupMatches.map((m) => m.groupNumber)).size === 2);
+    await recordValidatedTournamentResult(groupMatches[0]!.id, null);
+    const done = await playUntilDone(tournament.id);
+    check("le tournoi va jusqu'au bout (une nulle en groupe acceptée)", done);
+    const ko = await prisma.tournamentMatch.findMany({ where: { tournamentId: tournament.id, stage: "KNOCKOUT", round: 1 } });
+    check("demi-finales créées", ko.length === 2);
+    const groupOf = new Map<string, number>();
+    for (const m of groupMatches) {
+      groupOf.set(m.playerWhiteId!, m.groupNumber!);
+      if (m.playerBlackId) groupOf.set(m.playerBlackId, m.groupNumber!);
+    }
+    check("aucun duel entre membres du même groupe en demi-finale", ko.every((m) => groupOf.get(m.playerWhiteId!) !== groupOf.get(m.playerBlackId!)));
+    const placements = await prisma.tournamentParticipant.findMany({ where: { tournamentId: tournament.id } });
+    check("8 places distinctes attribuées", placements.every((p) => p.placement !== null) && new Set(placements.map((p) => p.placement)).size === 8);
+  }
+
+  for (const size of [4, 8]) {
+    console.log(`9. Double élimination à ${size} joueurs`);
+    const { tournament, people } = await makeTournament(TournamentType.DOUBLE_ELIMINATION, size, `d${size}`);
+    // Le favori perd sa première partie : il doit passer par le tableau des perdants.
+    const first = await prisma.tournamentMatch.findFirstOrThrow({
+      where: { tournamentId: tournament.id, stage: "WINNERS", round: 1, playerWhiteId: people[0]!.id },
+    });
+    await recordValidatedTournamentResult(first.id, first.playerBlackId!);
+    const done = await playUntilDone(tournament.id);
+    check("tournoi terminé", done);
+    const t = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+    const losersRounds = await prisma.tournamentMatch.groupBy({ by: ["round"], where: { tournamentId: tournament.id, stage: "LOSERS" } });
+    check(`tableau des perdants : ${2 * (Math.log2(size) - 1)} rondes`, losersRounds.length === 2 * (Math.log2(size) - 1));
+    check("le favori, battu une fois, gagne quand même via le tableau des perdants", t.winnerId === people[0]!.id, t.winnerId);
+    const gf = await prisma.tournamentMatch.count({ where: { tournamentId: tournament.id, stage: "GRAND_FINAL" } });
+    check("grande finale + match décisif (reset)", gf === 2, gf);
+    const losses = new Map<string, number>();
+    for (const m of await prisma.tournamentMatch.findMany({ where: { tournamentId: tournament.id } })) {
+      if (m.loserId) losses.set(m.loserId, (losses.get(m.loserId) ?? 0) + 1);
+    }
+    check(
+      "chaque éliminé a perdu exactement deux fois",
+      [...losses.entries()].filter(([id]) => id !== t.winnerId).every(([, n]) => n === 2),
+    );
+  }
+
+  console.log("10. Arena : appariement à la demande, série, démarrage anticipé, fin à l'échéance");
+  {
+    const people = await players(3, "a");
+    const tournament = await createTournament({
+      creatorId: people[0]!.id,
+      name: `${tag} arena`,
+      type: TournamentType.ARENA,
+      scope: "CITY",
+      gameType: "CHECKERS",
+      draughtsVariant: "INTERNATIONAL",
+      isPaid: false,
+      entryFeeCfa: 0,
+      entryPoints: 5,
+      maxPlayers: 8,
+      betMode: "FIXED",
+      rebuyEnabled: false,
+      durationMinutes: 30,
+    });
+    tournamentIds.push(tournament.id);
+    for (const p of people.slice(1)) await registerTournamentPlayer(tournament.id, p.id);
+    await startTournamentNow(tournament.id, people[0]!.id);
+    const started = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+    check("démarrage anticipé à 3 inscrits sur 8", started.status === "IN_PROGRESS");
+    check("fin programmée à +30 min", Math.round((started.endsAt!.getTime() - started.startedAt!.getTime()) / 60000) === 30);
+
+    const [a, b, c] = people;
+    const w1 = await arenaSearch(tournament.id, a!.id);
+    check("premier joueur : en attente", w1.status === "WAITING");
+    const m1 = await arenaSearch(tournament.id, b!.id);
+    check("deuxième joueur : apparié avec le premier", m1.status === "MATCHED");
+    if (m1.status === "MATCHED") await recordValidatedTournamentResult(m1.tournamentMatchId, a!.id);
+    await arenaSearch(tournament.id, a!.id);
+    const m2 = await arenaSearch(tournament.id, c!.id);
+    if (m2.status === "MATCHED") await recordValidatedTournamentResult(m2.tournamentMatchId, a!.id);
+    await arenaSearch(tournament.id, b!.id);
+    const m3 = await arenaSearch(tournament.id, a!.id);
+    check("le joueur en attente est servi", m3.status === "MATCHED");
+    if (m3.status === "MATCHED") await recordValidatedTournamentResult(m3.tournamentMatchId, a!.id);
+    const table = await getArenaStandings(prisma, tournament.id);
+    check("3 victoires d'affilée : 2 + 2 + 4 = 8 points", table[0]!.userId === a!.id && table[0]!.score === 8, table[0]);
+
+    await prisma.tournament.update({ where: { id: tournament.id }, data: { endsAt: new Date(Date.now() - 1000) } });
+    let refused = false;
+    try {
+      await arenaSearch(tournament.id, b!.id);
+    } catch {
+      refused = true;
+    }
+    check("plus d'appariement après l'échéance", refused);
+    await closeExpiredTimedTournaments();
+    const closed = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+    check("Arena clôturée, vainqueur = meilleur score", closed.status === "COMPLETED" && closed.winnerId === a!.id);
+  }
+
+  console.log("11. Survival : l'arrêt attend la fin d'une partie déjà commencée");
+  {
+    const { tournament, people } = await makeTournament(TournamentType.SURVIVAL_BANK, 4, "z", {
+      entryPoints: 30,
+      minBet: 10,
+      maxBet: 10,
+    });
+    const tm = await prisma.tournamentMatch.findFirstOrThrow({
+      where: { tournamentId: tournament.id, round: 1, playerBlackId: { not: null } },
+    });
+    const game = await startTournamentGame(tm.id, tm.playerWhiteId!);
+    let last = { stopped: false, pendingStop: false, votes: 0, required: 0 };
+    for (const p of people) last = await voteSurvivalStop(tournament.id, p.id, true);
+    check("unanimité pendant une partie : arrêt différé", !last.stopped && last.pendingStop);
+    await closeExpiredTimedTournaments();
+    let t = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+    check("toujours en cours tant que la partie n'est pas finie", t.status === "IN_PROGRESS");
+    let refused = false;
+    try {
+      const other = await prisma.tournamentMatch.findFirstOrThrow({
+        where: { tournamentId: tournament.id, round: 1, playerBlackId: { not: null }, id: { not: tm.id } },
+      });
+      await startTournamentGame(other.id, other.playerWhiteId!);
+    } catch {
+      refused = true;
+    }
+    check("aucune nouvelle partie ne peut démarrer", refused);
+    await settleMatch({ matchId: game.matchId, winnerId: tm.playerWhiteId!, whiteRemainingPieces: 9, blackRemainingPieces: 1 });
+    await reportTournamentGame(game.matchId);
+    t = await prisma.tournament.findUniqueOrThrow({ where: { id: tournament.id } });
+    check("clôture dès la fin de la partie", t.status === "COMPLETED");
+    const winner = await prisma.user.findUniqueOrThrow({ where: { id: tm.playerWhiteId! } });
+    check("le gagnant de cette dernière partie récupère 40 (mise comprise)", winner.pointsFree === 100 - 30 + 40, winner.pointsFree);
+  }
+}
+
 main()
   .then(() => survivalScenarios())
+  .then(() => advancedScenarios())
   .catch((error) => {
     failures += 1;
     console.error("Erreur inattendue :", error);

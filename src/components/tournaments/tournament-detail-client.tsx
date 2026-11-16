@@ -14,7 +14,8 @@ interface PlayerRef {
 
 interface TournamentMatchRow {
   id: string;
-  stage: "MAIN" | "THIRD_PLACE";
+  stage: "MAIN" | "THIRD_PLACE" | "GROUP" | "KNOCKOUT" | "WINNERS" | "LOSERS" | "GRAND_FINAL";
+  groupNumber: number | null;
   round: number;
   matchNumber: number;
   status: "WAITING" | "IN_PROGRESS" | "FINISHED";
@@ -65,7 +66,12 @@ interface Detail {
     maxBet: number | null;
     betMode: "FIXED" | "VARIABLE";
   };
-  format: "STANDINGS" | "BRACKET" | "SURVIVAL";
+  format: "STANDINGS" | "BRACKET" | "SURVIVAL" | "GROUPS" | "DOUBLE" | "ARENA";
+  groups:
+    | { group: number; rows: { userId: string; username: string; rank: number; score: number; wins: number; draws: number; losses: number; buchholz: number }[] }[]
+    | null;
+  arena: { userId: string; username: string; rank: number; score: number; games: number; wins: number; draws: number; losses: number; onFire: boolean }[] | null;
+  arenaWaiting: boolean;
   standings:
     | { userId: string; username: string; rank: number; score: number; played: number; wins: number; draws: number; losses: number; byes: number; buchholz: number; sonnebornBerger: number }[]
     | null;
@@ -115,13 +121,81 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
     return () => window.clearInterval(timer);
   }, [load]);
 
+  // Sections : étape (groupes, tableau des vainqueurs/perdants…), groupe et ronde.
   const rounds = useMemo(() => {
-    const map = new Map<number, TournamentMatchRow[]>();
+    const STAGE_ORDER: Record<string, number> = { GROUP: 0, MAIN: 1, KNOCKOUT: 1, WINNERS: 1, LOSERS: 2, THIRD_PLACE: 1, GRAND_FINAL: 3 };
+    const map = new Map<string, { label: string; order: number[]; matches: TournamentMatchRow[] }>();
+    const arena = data?.format === "ARENA";
     for (const m of data?.tournament.bracketMatches ?? []) {
-      map.set(m.round, [...(map.get(m.round) ?? []), m]);
+      const stage = m.stage === "THIRD_PLACE" ? (data?.format === "GROUPS" ? "KNOCKOUT" : "MAIN") : m.stage;
+      const key = arena ? "arena" : `${stage}-${m.groupNumber ?? 0}-${m.round}`;
+      const label = arena
+        ? "Parties de l’Arena"
+        : stage === "GROUP"
+          ? `Groupe ${String.fromCharCode(64 + (m.groupNumber ?? 1))} · ronde ${m.round}`
+          : stage === "WINNERS"
+            ? `Tableau des vainqueurs · ronde ${m.round}`
+            : stage === "LOSERS"
+              ? `Tableau des perdants · ronde ${m.round}`
+              : stage === "GRAND_FINAL"
+                ? m.round === 1 ? "Grande finale" : "Grande finale · match décisif"
+                : stage === "KNOCKOUT"
+                  ? `Phase finale · tour ${m.round}`
+                  : `Ronde ${m.round}`;
+      const entry = map.get(key) ?? { label, order: [STAGE_ORDER[stage] ?? 1, m.groupNumber ?? 0, m.round], matches: [] };
+      entry.matches.push(m);
+      map.set(key, entry);
     }
-    return [...map.entries()].sort((a, b) => a[0] - b[0]);
+    const list = [...map.values()].sort(
+      (a, b) => a.order[0]! - b.order[0]! || a.order[2]! - b.order[2]! || a.order[1]! - b.order[1]!,
+    );
+    if (arena) list.forEach((r) => r.matches.reverse());
+    return list;
   }, [data]);
+
+  // Arena : en recherche, on vérifie régulièrement si un adversaire a été trouvé.
+  useEffect(() => {
+    if (!data?.arenaWaiting) return;
+    const timer = window.setInterval(() => void load(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [data?.arenaWaiting, load]);
+  useEffect(() => {
+    if (data?.format !== "ARENA" || !data.viewer) return;
+    const live = data.tournament.bracketMatches.find(
+      (m) => m.liveGameId && (m.playerWhite?.id === data.viewer!.id || m.playerBlack?.id === data.viewer!.id),
+    );
+    if (live?.liveGameId) router.push(`/match/${live.liveGameId}`);
+  }, [data, router]);
+
+  async function arenaAction(action: "search" | "cancel") {
+    setBusy("arena");
+    const response = await fetch(`/api/tournaments/${tournamentId}/arena`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    const json = await response.json().catch(() => ({}));
+    setBusy(null);
+    if (!response.ok) {
+      setNotice(json.error ?? "Action impossible.");
+      return;
+    }
+    if (json.status === "MATCHED" && json.matchId) {
+      router.push(`/match/${json.matchId}`);
+      return;
+    }
+    await load();
+  }
+
+  async function startNow() {
+    if (!window.confirm("Démarrer le tournoi maintenant avec les joueurs déjà inscrits ?")) return;
+    setBusy("start");
+    const response = await fetch(`/api/tournaments/${tournamentId}/start`, { method: "POST" });
+    const json = await response.json().catch(() => ({}));
+    setBusy(null);
+    setNotice(response.ok ? "Tournoi démarré." : json.error ?? "Démarrage impossible.");
+    await load();
+  }
 
   async function play(match: TournamentMatchRow) {
     if (match.liveGameId) {
@@ -153,7 +227,9 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
       response.ok
         ? json.stopped
           ? "Tous les joueurs sont d’accord : le tournoi est arrêté, chacun garde son capital."
-          : `Vote enregistré (${json.votes}/${json.required}).`
+          : json.pendingStop
+            ? "Tous les joueurs sont d’accord : le tournoi s’arrêtera dès la fin des parties en cours."
+            : `Vote enregistré (${json.votes}/${json.required}).`
         : json.error ?? "Vote impossible.",
     );
     await load();
@@ -240,8 +316,91 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
 
       {tournament.status === "OPEN" && (
         <EmptyState title="En attente des inscriptions">
-          Le tournoi démarre automatiquement dès que les {tournament.maxPlayers} places sont prises.
+          {tournament.participants.length}/{tournament.maxPlayers} inscrits. Le tournoi démarre automatiquement quand il est complet.
+          {viewer?.isOrganizer && ["SWISS", "ROUND_ROBIN", "LEAGUE", "SURVIVAL_BANK", "ARENA"].includes(tournament.type) && (
+            <span className="mt-3 block">
+              <button type="button" disabled={busy === "start"} onClick={startNow} className="btn btn-primary">
+                <Play className="size-4" /> Démarrer maintenant
+              </button>
+            </span>
+          )}
         </EmptyState>
+      )}
+
+      {data.format === "ARENA" && tournament.status !== "OPEN" && data.arena && (
+        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+          <div className="card overflow-hidden">
+            <h2 className="px-5 pt-5 text-base font-semibold">Classement de l’Arena</h2>
+            <p className="px-5 text-xs text-ink-muted">Victoire 2 pts, nulle 1 pt. Après deux victoires de suite, les points sont doublés 🔥.</p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[380px] text-sm">
+                <thead className="border-y border-line text-xs text-ink-muted">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-medium">#</th>
+                    <th className="px-2 py-2 text-left font-medium">Joueur</th>
+                    <th className="px-2 py-2 text-right font-medium">Parties</th>
+                    <th className="px-4 py-2 text-right font-medium">Points</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {data.arena.map((row) => (
+                    <tr key={row.userId} className={row.userId === viewer?.id ? "bg-accent/[0.06]" : ""}>
+                      <td className="tabular px-4 py-2 text-ink-muted">{row.rank}</td>
+                      <td className="px-2 py-2 font-medium">{row.username} {row.onFire && <span aria-label="En série">🔥</span>}</td>
+                      <td className="tabular px-2 py-2 text-right text-ink-muted">{row.games} ({row.wins}/{row.draws}/{row.losses})</td>
+                      <td className="tabular px-4 py-2 text-right font-semibold">{row.score}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="space-y-3">
+            {tournament.endsAt && (
+              <div className="card p-4">
+                <p className="eyebrow">Fin de l’Arena</p>
+                <p className="mt-1 text-sm font-semibold">{new Date(tournament.endsAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</p>
+                <p className="mt-1 text-xs text-ink-muted">Enchaînez un maximum de parties avant la fin. Les parties commencées avant l’heure sont comptées.</p>
+              </div>
+            )}
+            {tournament.status === "IN_PROGRESS" && viewer?.isParticipant && (
+              <div className="card p-4">
+                {data.arenaWaiting ? (
+                  <>
+                    <p className="flex items-center gap-2 text-sm"><RefreshCw className="size-4 animate-spin text-accent" /> Recherche d’un adversaire…</p>
+                    <button type="button" disabled={busy === "arena"} onClick={() => arenaAction("cancel")} className="btn btn-ghost mt-3 w-full">Annuler</button>
+                  </>
+                ) : (
+                  <button type="button" disabled={busy === "arena"} onClick={() => arenaAction("search")} className="btn btn-primary w-full">
+                    <Swords className="size-4" /> Chercher un adversaire
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {data.format === "GROUPS" && data.groups && tournament.status !== "OPEN" && (
+        <section className="grid gap-3 md:grid-cols-2">
+          {data.groups.map((g) => (
+            <div key={g.group} className="card overflow-hidden">
+              <h2 className="px-4 pt-4 text-sm font-semibold">Groupe {String.fromCharCode(64 + g.group)}</h2>
+              <table className="mt-2 w-full text-sm">
+                <tbody className="divide-y divide-line">
+                  {g.rows.map((row) => (
+                    <tr key={row.userId} className={row.userId === viewer?.id ? "bg-accent/[0.06]" : ""}>
+                      <td className="tabular w-8 px-4 py-1.5 text-ink-muted">{row.rank}</td>
+                      <td className="px-2 py-1.5 font-medium">{row.username}</td>
+                      <td className="tabular px-2 py-1.5 text-right text-ink-muted">{row.wins}/{row.draws}/{row.losses}</td>
+                      <td className="tabular px-4 py-1.5 text-right font-semibold">{scoreLabel(row.score)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </section>
       )}
 
       {data.format === "SURVIVAL" && tournament.status !== "OPEN" && (() => {
@@ -368,9 +527,9 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
 
         {rounds.length > 0 && (
           <section className="space-y-3">
-            {rounds.map(([round, matches]) => (
-              <div key={round} className="card p-4">
-                <h3 className="eyebrow">Ronde {round}{matches.some((m) => m.stage === "THIRD_PLACE") ? " · finale et 3e place" : ""}</h3>
+            {rounds.map(({ label, matches }) => (
+              <div key={label} className="card p-4">
+                <h3 className="eyebrow">{label}{matches.some((m) => m.stage === "THIRD_PLACE") ? " · finale et 3e place" : ""}</h3>
                 <ul className="mt-2 space-y-2">
                   {matches.map((m) => {
                     const mine = viewer && (viewer.id === m.playerWhite?.id || viewer.id === m.playerBlack?.id);
@@ -433,7 +592,7 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
                                     {p.username}
                                   </button>
                                 ))}
-                                {data.format !== "BRACKET" && (
+                                {(data.format === "STANDINGS" || data.format === "SURVIVAL" || data.format === "ARENA" || m.stage === "GROUP") && (
                                   <button
                                     type="button"
                                     disabled={busy === m.id}

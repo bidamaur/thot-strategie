@@ -375,6 +375,10 @@ export const SETTING_DEFINITIONS = [
   { key: "tournaments.roundRobinMaxPlayers", category: "tournaments", type: "number", default: 20, min: 3, max: 40, integer: true, label: "Joueurs max. en toutes rondes / ligue" },
   { key: "tournaments.gamesRated", category: "tournaments", type: "boolean", default: true, label: "Les parties de tournoi comptent pour l'ELO" },
   { key: "tournaments.prizeSplitPercent", category: "tournaments", type: "json", default: [50, 30, 20], label: "Répartition des prix (1er, 2e, 3e) en %", description: "Trois pourcentages dont la somme vaut 100." },
+  { key: "tournaments.groupSize", category: "tournaments", type: "number", default: 4, min: 3, max: 8, integer: true, label: "Joueurs par groupe (groupes + phase finale)" },
+  { key: "tournaments.groupQualifiers", category: "tournaments", type: "number", default: 2, min: 1, max: 4, integer: true, label: "Qualifiés par groupe" },
+  { key: "tournaments.arenaDefaultMinutes", category: "tournaments", type: "number", default: 60, min: 10, max: 1440, integer: true, label: "Durée par défaut d'une Arena", unit: "min" },
+  { key: "tournaments.arenaMaxMinutes", category: "tournaments", type: "number", default: 240, min: 10, max: 1440, integer: true, label: "Durée maximale d'une Arena", unit: "min" },
   { key: "tournaments.noShowForfeitMinutes", category: "tournaments", type: "number", default: 5, min: 0, max: 120, integer: true, label: "Forfait si l'adversaire ne rejoint pas la partie (0 = désactivé)", unit: "min" },
   { key: "tournaments.freezeRulesOnStart", category: "tournaments", type: "boolean", default: true, label: "Figer les règles au démarrage", description: "Les paramètres sont copiés dans le tournoi à son lancement et ne changent plus." },
 

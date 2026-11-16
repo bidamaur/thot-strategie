@@ -259,6 +259,8 @@ model Tournament {
   description          String?                 @db.VarChar(1000)
   /// Survival : durée en jours ; le tournoi s'arrête automatiquement à `endsAt`.
   durationDays         Int?
+  /// Arena : durée en minutes.
+  durationMinutes      Int?
   endsAt               DateTime?
   stopVotes            TournamentStopVote[]
   club                 Club?                   @relation(fields: [clubId], references: [id], onDelete: SetNull)
@@ -330,6 +332,8 @@ model TournamentParticipant {
   status       TournamentParticipantStatus @default(ACTIVE)
   joinedAt     DateTime   @default(now())
   eliminatedAt DateTime?
+  /// Arena : en attente d'un adversaire depuis cette date.
+  arenaWaitingSince DateTime?
   tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   user         User       @relation(fields: [userId], references: [id])
 
@@ -337,6 +341,7 @@ model TournamentParticipant {
   @@unique([tournamentId, seed])
   @@index([tournamentId, placement])
   @@index([tournamentId, status])
+  @@index([tournamentId, arenaWaitingSince])
 }
 
 model TournamentMatch {
@@ -352,6 +357,7 @@ model TournamentMatch {
   loserId       String?
   status        TournamentMatchStatus @default(WAITING)
   betAmount     Int?                  // Mise pour ce match (Survival Bank)
+  groupNumber   Int?                  // Phase de groupes : numéro du groupe (1, 2, …)
   betStatus     BetStatus?            // Statut de la mise
   betSettled    Boolean               @default(false)
   whiteRemainingPieces Int?
@@ -488,6 +494,11 @@ enum RatingChangeReason {
 enum TournamentMatchStage {
   MAIN
   THIRD_PLACE
+  GROUP
+  KNOCKOUT
+  WINNERS
+  LOSERS
+  GRAND_FINAL
 }
 
 enum TournamentMatchStatus {

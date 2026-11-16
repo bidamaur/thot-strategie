@@ -1,7 +1,9 @@
 import { MatchStatus } from "@/generated/prisma-client";
 import { getRequestUser } from "@/lib/auth/session";
 import {
-  closeExpiredSurvivals,
+  closeExpiredTimedTournaments,
+  getArenaStandings,
+  getGroupStandings,
   getTournamentStandings,
   isStandingsFormat,
   reconcileTournamentGames,
@@ -19,7 +21,7 @@ export async function GET(request: Request, { params }: RouteContext) {
   try {
     // Reprise après incident : reporte les parties terminées non encore comptées.
     await reconcileTournamentGames(tournamentId);
-    await closeExpiredSurvivals();
+    await closeExpiredTimedTournaments();
 
     const tournament = await prisma.tournament.findUnique({
       where: { id: tournamentId },
@@ -83,6 +85,18 @@ export async function GET(request: Request, { params }: RouteContext) {
       ? await getTournamentStandings(prisma, tournamentId)
       : null;
     const names = new Map(tournament.participants.map((p) => [p.userId, p.user.username]));
+    const groups =
+      tournament.type === "GROUPS_ELIMINATION"
+        ? (await getGroupStandings(prisma, tournamentId)).map((g) => ({
+            group: g.group,
+            rows: g.rows.map((row) => ({ ...row, username: names.get(row.userId) ?? "?" })),
+          }))
+        : null;
+    const arena =
+      tournament.type === "ARENA"
+        ? (await getArenaStandings(prisma, tournamentId)).map((row) => ({ ...row, username: names.get(row.userId) ?? "?" }))
+        : null;
+    const me = currentUser ? tournament.participants.find((p) => p.userId === currentUser.id) : undefined;
 
     return NextResponse.json({
       tournament: {
@@ -109,13 +123,27 @@ export async function GET(request: Request, { params }: RouteContext) {
           liveGameId: games[0]?.id ?? null,
         })),
       },
-      format: tournament.type === "SURVIVAL_BANK" ? "SURVIVAL" : standings ? "STANDINGS" : "BRACKET",
+      format:
+        tournament.type === "SURVIVAL_BANK"
+          ? "SURVIVAL"
+          : tournament.type === "ARENA"
+            ? "ARENA"
+            : tournament.type === "GROUPS_ELIMINATION"
+              ? "GROUPS"
+              : tournament.type === "DOUBLE_ELIMINATION"
+                ? "DOUBLE"
+                : standings
+                  ? "STANDINGS"
+                  : "BRACKET",
+      groups,
+      arena,
+      arenaWaiting: Boolean(me?.arenaWaitingSince),
       standings: standings?.map((row) => ({ ...row, username: names.get(row.userId) ?? "?" })) ?? null,
       viewer: currentUser
         ? {
             id: currentUser.id,
             isParticipant,
-            isOrganizer: currentUser.id === tournament.creatorId,
+            isOrganizer: currentUser.id === tournament.creatorId || currentUser.isAdmin,
             isAdmin: currentUser.isAdmin,
           }
         : null,

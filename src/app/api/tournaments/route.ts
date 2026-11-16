@@ -218,7 +218,11 @@ export async function POST(request: Request) {
     clubId,
     description,
     durationDays,
+    durationMinutes,
   } = fields;
+  if (durationMinutes !== undefined && (typeof durationMinutes !== "number" || !Number.isInteger(durationMinutes))) {
+    return NextResponse.json({ error: "Durée invalide." }, { status: 400 });
+  }
   if (durationDays !== undefined && (typeof durationDays !== "number" || !Number.isInteger(durationDays))) {
     return NextResponse.json({ error: "Durée invalide." }, { status: 400 });
   }
@@ -386,6 +390,7 @@ export async function POST(request: Request) {
       clubId: resolvedClubId,
       description: resolvedDescription,
       durationDays: typeof durationDays === "number" ? durationDays : undefined,
+      durationMinutes: typeof durationMinutes === "number" ? durationMinutes : undefined,
     });
 
     return NextResponse.json(

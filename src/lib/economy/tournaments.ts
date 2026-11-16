@@ -17,6 +17,18 @@ import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings/service";
 import { withSerializableRetry } from "@/lib/db/retry";
 import {
+  arenaStandings,
+  doubleElimShape,
+  groupLayout,
+  isPowerOfTwo,
+  knockoutFromGroups,
+  losersRoundSources,
+  pairAdjacent,
+  pairMixed,
+  pickArenaOpponent,
+  snakeGroups,
+} from "@/lib/tournament/advanced-formats";
+import {
   survivalPairings,
   survivalPayout,
   survivalRanking,
@@ -42,6 +54,17 @@ export const PLAYABLE_TOURNAMENT_TYPES = new Set<TournamentType>([
   ...BRACKET_TYPES,
   ...STANDINGS_TYPES,
   TournamentType.SURVIVAL_BANK,
+  TournamentType.GROUPS_ELIMINATION,
+  TournamentType.DOUBLE_ELIMINATION,
+  TournamentType.ARENA,
+]);
+/** Formats pouvant démarrer avant d'être complets (sur décision de l'organisateur). */
+const EARLY_START_TYPES = new Set<TournamentType>([
+  TournamentType.SWISS,
+  TournamentType.ROUND_ROBIN,
+  TournamentType.LEAGUE,
+  TournamentType.SURVIVAL_BANK,
+  TournamentType.ARENA,
 ]);
 
 export function isStandingsFormat(type: TournamentType): boolean {
@@ -99,6 +122,8 @@ export interface CreateTournamentInput {
   description?: string | null;
   /** Survival : durée en jours avant arrêt automatique. */
   durationDays?: number;
+  /** Arena : durée en minutes. */
+  durationMinutes?: number;
 }
 
 async function assertCapacity(maxPlayers: number, type: TournamentType): Promise<void> {
@@ -118,6 +143,17 @@ async function assertCapacity(maxPlayers: number, type: TournamentType): Promise
       "Ce format à élimination exige 4, 8, 16, 32 ou 64 joueurs.",
       "INVALID_INPUT",
     );
+  }
+  if (type === TournamentType.DOUBLE_ELIMINATION && !isPowerOfTwo(maxPlayers)) {
+    throw new TournamentEconomyError(
+      "La double élimination exige 4, 8, 16, 32 ou 64 joueurs.",
+      "INVALID_INPUT",
+    );
+  }
+  if (type === TournamentType.GROUPS_ELIMINATION) {
+    const g = await getSettings(["tournaments.groupSize", "tournaments.groupQualifiers"] as const);
+    const layout = groupLayout(maxPlayers, g["tournaments.groupSize"], g["tournaments.groupQualifiers"]);
+    if ("error" in layout) throw new TournamentEconomyError(layout.error, "INVALID_INPUT");
   }
   if (type === TournamentType.ROUND_ROBIN || type === TournamentType.LEAGUE) {
     const settings = await getSettings(["tournaments.roundRobinMaxPlayers"] as const);
@@ -181,6 +217,17 @@ export async function createTournament(input: CreateTournamentInput) {
       "Le Survival en points argent est désactivé par l’administration.",
       "INVALID_INPUT",
     );
+  }
+  let durationMinutes: number | null = null;
+  if (input.type === TournamentType.ARENA) {
+    const a = await getSettings(["tournaments.arenaDefaultMinutes", "tournaments.arenaMaxMinutes"] as const);
+    durationMinutes = input.durationMinutes ?? a["tournaments.arenaDefaultMinutes"];
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 10 || durationMinutes > a["tournaments.arenaMaxMinutes"]) {
+      throw new TournamentEconomyError(
+        `La durée d’une Arena doit être comprise entre 10 et ${a["tournaments.arenaMaxMinutes"]} minutes.`,
+        "INVALID_INPUT",
+      );
+    }
   }
   const durationDays =
     input.type === TournamentType.SURVIVAL_BANK
@@ -282,6 +329,7 @@ export async function createTournament(input: CreateTournamentInput) {
               ? (input.maxBet ?? survivalCapital)
               : input.maxBet,
             durationDays,
+            durationMinutes,
             betMode: input.betMode,
             survivalBankEnabled,
             rebuyEnabled: input.rebuyEnabled,
@@ -345,6 +393,26 @@ async function createOpeningRound(
 
   if (type === TournamentType.SURVIVAL_BANK) {
     await createSurvivalRound(transaction, tournamentId, 1);
+    return;
+  }
+  if (type === TournamentType.ARENA) return; // appariement à la demande
+  if (type === TournamentType.GROUPS_ELIMINATION) {
+    await createGroupStage(transaction, tournamentId, sorted.map((p) => p.userId));
+    return;
+  }
+  if (type === TournamentType.DOUBLE_ELIMINATION) {
+    const half = sorted.length / 2;
+    await transaction.tournamentMatch.createMany({
+      data: Array.from({ length: half }, (_, index) => ({
+        tournamentId,
+        stage: TournamentMatchStage.WINNERS,
+        round: 1,
+        matchNumber: index + 1,
+        playerWhiteId: sorted[index]!.userId,
+        playerBlackId: sorted[sorted.length - index - 1]!.userId,
+        status: TournamentMatchStatus.WAITING,
+      })),
+    });
     return;
   }
 
@@ -464,20 +532,24 @@ async function advanceSurvival(
   tournamentId: string,
   round: number,
 ): Promise<void> {
-  const pending = await transaction.tournamentMatch.count({
-    where: { tournamentId, round, status: { not: TournamentMatchStatus.FINISHED } },
-  });
-  if (pending > 0) return;
   const tournament = await transaction.tournament.findUniqueOrThrow({
     where: { id: tournamentId },
     select: { endsAt: true },
   });
   const expired = tournament.endsAt !== null && tournament.endsAt <= new Date();
-  if (!expired) {
-    const created = await createSurvivalRound(transaction, tournamentId, round + 1);
-    if (created > 0) return;
+  if (expired) {
+    // Arrêt demandé (durée écoulée ou unanimité) : on attend seulement la fin
+    // des parties déjà commencées, les parties non lancées sont abandonnées.
+    if (!(await hasGameInProgress(transaction, tournamentId))) await closeSurvival(transaction, tournamentId);
+    return;
   }
-  // Un seul survivant, plus aucune partie possible, ou date de fin atteinte.
+  const pending = await transaction.tournamentMatch.count({
+    where: { tournamentId, round, status: { not: TournamentMatchStatus.FINISHED } },
+  });
+  if (pending > 0) return;
+  const created = await createSurvivalRound(transaction, tournamentId, round + 1);
+  if (created > 0) return;
+  // Un seul survivant ou plus aucune partie possible.
   await closeSurvival(transaction, tournamentId);
 }
 
@@ -504,7 +576,7 @@ export async function voteSurvivalStop(
   tournamentId: string,
   userId: string,
   agree: boolean,
-): Promise<{ stopped: boolean; votes: number; required: number }> {
+): Promise<{ stopped: boolean; pendingStop: boolean; votes: number; required: number }> {
   return withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
@@ -539,35 +611,441 @@ export async function voteSurvivalStop(
           where: { tournamentId, userId: { in: activeIds } },
         });
         if (votes >= activeIds.length) {
+          // Unanimité : arrêt immédiat, ou dès la fin des parties en cours.
+          await tx.tournament.update({ where: { id: tournamentId }, data: { endsAt: new Date() } });
+          if (await hasGameInProgress(tx, tournamentId)) {
+            return { stopped: false, pendingStop: true, votes, required: activeIds.length };
+          }
           await closeSurvival(tx, tournamentId);
-          return { stopped: true, votes, required: activeIds.length };
+          return { stopped: true, pendingStop: false, votes, required: activeIds.length };
         }
-        return { stopped: false, votes, required: activeIds.length };
+        return { stopped: false, pendingStop: false, votes, required: activeIds.length };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
   );
 }
 
-/** Arrête les Survival dont la durée est écoulée (appelé périodiquement). */
-export async function closeExpiredSurvivals(): Promise<number> {
+/**
+ * Clôture les tournois à durée (Survival, Arena) arrivés à échéance, dès
+ * qu'aucune partie n'est en cours (appelé périodiquement).
+ */
+export async function closeExpiredTimedTournaments(): Promise<number> {
   const expired = await prisma.tournament.findMany({
     where: {
-      type: TournamentType.SURVIVAL_BANK,
+      type: { in: [TournamentType.SURVIVAL_BANK, TournamentType.ARENA] },
       status: TournamentStatus.IN_PROGRESS,
       endsAt: { lte: new Date() },
+      bracketMatches: { none: { status: TournamentMatchStatus.IN_PROGRESS } },
     },
-    select: { id: true },
+    select: { id: true, type: true },
     take: 50,
   });
-  for (const { id } of expired) {
+  for (const { id, type } of expired) {
     await withSerializableRetry(() =>
-      prisma.$transaction((tx) => closeSurvival(tx, id), {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      }),
-    ).catch((error) => console.error("Clôture Survival impossible :", error));
+      prisma.$transaction(
+        (tx) => (type === TournamentType.ARENA ? closeArena(tx, id) : closeSurvival(tx, id)),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    ).catch((error) => console.error("Clôture d'un tournoi à durée impossible :", error));
   }
   return expired.length;
+}
+
+/** @deprecated conservé pour compatibilité : utiliser closeExpiredTimedTournaments. */
+export const closeExpiredSurvivals = closeExpiredTimedTournaments;
+
+async function hasGameInProgress(transaction: Prisma.TransactionClient, tournamentId: string): Promise<boolean> {
+  return (
+    (await transaction.tournamentMatch.count({
+      where: { tournamentId, status: TournamentMatchStatus.IN_PROGRESS },
+    })) > 0
+  );
+}
+
+// ── Groupes + phase finale ──────────────────────────────────────────────
+
+async function createGroupStage(
+  transaction: Prisma.TransactionClient,
+  tournamentId: string,
+  seededIds: string[],
+): Promise<void> {
+  const tournament = await transaction.tournament.findUniqueOrThrow({
+    where: { id: tournamentId },
+    select: { configSnapshot: true },
+  });
+  const frozen = tournament.configSnapshot as { groupSize?: number; groupQualifiers?: number } | null;
+  const settings = await getSettings(["tournaments.groupSize", "tournaments.groupQualifiers"] as const);
+  const layout = groupLayout(
+    seededIds.length,
+    frozen?.groupSize ?? settings["tournaments.groupSize"],
+    frozen?.groupQualifiers ?? settings["tournaments.groupQualifiers"],
+  );
+  if ("error" in layout) throw new TournamentEconomyError(layout.error, "INVALID_INPUT");
+  const groups = snakeGroups(seededIds, layout.groups);
+  const now = new Date();
+  for (let g = 0; g < groups.length; g += 1) {
+    const rounds = roundRobinSchedule(groups[g]!);
+    for (let r = 0; r < rounds.length; r += 1) {
+      await transaction.tournamentMatch.createMany({
+        data: rounds[r]!.map((pairing, index) => ({
+          tournamentId,
+          stage: TournamentMatchStage.GROUP,
+          groupNumber: g + 1,
+          round: r + 1,
+          matchNumber: (g + 1) * 1000 + index + 1,
+          playerWhiteId: pairing.whiteId,
+          playerBlackId: pairing.blackId,
+          ...(pairing.blackId === null
+            ? { status: TournamentMatchStatus.FINISHED, winnerId: pairing.whiteId, completedAt: now }
+            : { status: TournamentMatchStatus.WAITING }),
+        })),
+      });
+    }
+  }
+}
+
+/** Classement de chaque groupe (score, Buchholz, Sonneborn-Berger). */
+export async function getGroupStandings(
+  client: Prisma.TransactionClient | typeof prisma,
+  tournamentId: string,
+) {
+  const [participants, matches] = await Promise.all([
+    client.tournamentParticipant.findMany({ where: { tournamentId }, select: { userId: true, seed: true } }),
+    client.tournamentMatch.findMany({
+      where: { tournamentId, stage: TournamentMatchStage.GROUP },
+      select: { groupNumber: true, playerWhiteId: true, playerBlackId: true, winnerId: true, status: true },
+    }),
+  ]);
+  const seeds = new Map(participants.map((p) => [p.userId, p.seed]));
+  const byGroup = new Map<number, typeof matches>();
+  for (const m of matches) byGroup.set(m.groupNumber ?? 0, [...(byGroup.get(m.groupNumber ?? 0) ?? []), m]);
+  return [...byGroup.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([group, list]) => {
+      const ids = new Set<string>();
+      for (const m of list) {
+        if (m.playerWhiteId) ids.add(m.playerWhiteId);
+        if (m.playerBlackId) ids.add(m.playerBlackId);
+      }
+      return {
+        group,
+        rows: computeStandings(
+          [...ids].map((userId) => ({ userId, seed: seeds.get(userId) ?? 999 })),
+          list
+            .filter((m) => m.playerWhiteId)
+            .map((m) => ({
+              whiteId: m.playerWhiteId!,
+              blackId: m.playerBlackId,
+              winnerId: m.winnerId,
+              finished: m.status === TournamentMatchStatus.FINISHED,
+            })),
+        ),
+      };
+    });
+}
+
+async function advanceGroupStage(transaction: Prisma.TransactionClient, tournamentId: string): Promise<void> {
+  const pending = await transaction.tournamentMatch.count({
+    where: { tournamentId, stage: TournamentMatchStage.GROUP, status: { not: TournamentMatchStatus.FINISHED } },
+  });
+  if (pending > 0) return;
+  const already = await transaction.tournamentMatch.count({
+    where: { tournamentId, stage: TournamentMatchStage.KNOCKOUT },
+  });
+  if (already > 0) return;
+
+  const tournament = await transaction.tournament.findUniqueOrThrow({
+    where: { id: tournamentId },
+    select: { configSnapshot: true },
+  });
+  const frozen = tournament.configSnapshot as { groupQualifiers?: number } | null;
+  const perGroup =
+    frozen?.groupQualifiers ??
+    (await getSettings(["tournaments.groupQualifiers"] as const))["tournaments.groupQualifiers"];
+  const groups = await getGroupStandings(transaction, tournamentId);
+
+  const qualified = groups.flatMap(({ group, rows }) =>
+    rows.slice(0, perGroup).map((row) => ({ userId: row.userId, group, rank: row.rank })),
+  );
+  // Non qualifiés : classés après les qualifiés (rang de groupe, puis points).
+  const out = groups
+    .flatMap(({ rows }) => rows.slice(perGroup))
+    .sort((a, b) => a.rank - b.rank || b.score - a.score || b.buchholz - a.buchholz);
+  for (let i = 0; i < out.length; i += 1) {
+    await transaction.tournamentParticipant.update({
+      where: { tournamentId_userId: { tournamentId, userId: out[i]!.userId } },
+      data: { placement: qualified.length + i + 1, status: TournamentParticipantStatus.ELIMINATED, eliminatedAt: new Date() },
+    });
+  }
+  const pairs = knockoutFromGroups(qualified);
+  if (pairs.length === 1) {
+    // Deux qualifiés seulement : finale directe, sans petite finale.
+    await transaction.tournamentMatch.create({
+      data: {
+        tournamentId,
+        stage: TournamentMatchStage.KNOCKOUT,
+        round: 1,
+        matchNumber: 1,
+        playerWhiteId: pairs[0]!.whiteId,
+        playerBlackId: pairs[0]!.blackId,
+        status: TournamentMatchStatus.WAITING,
+      },
+    });
+    return;
+  }
+  await transaction.tournamentMatch.createMany({
+    data: pairs.map((pair, index) => ({
+      tournamentId,
+      stage: TournamentMatchStage.KNOCKOUT,
+      round: 1,
+      matchNumber: index + 1,
+      playerWhiteId: pair.whiteId,
+      playerBlackId: pair.blackId,
+      status: TournamentMatchStatus.WAITING,
+    })),
+  });
+}
+
+// ── Double élimination ─────────────────────────────────────────────────
+
+/**
+ * Crée toutes les rondes dont les prérequis sont remplis (idempotent).
+ * Tableau des vainqueurs → perdants reversés dans le tableau des perdants →
+ * grande finale, avec « reset » si le champion du tableau des perdants gagne.
+ */
+async function progressDoubleElimination(transaction: Prisma.TransactionClient, tournamentId: string): Promise<void> {
+  const players = await transaction.tournamentParticipant.count({ where: { tournamentId } });
+  const { winnersRounds: k, losersRounds: L } = doubleElimShape(players);
+  const all = await transaction.tournamentMatch.findMany({
+    where: {
+      tournamentId,
+      stage: { in: [TournamentMatchStage.WINNERS, TournamentMatchStage.LOSERS, TournamentMatchStage.GRAND_FINAL] },
+    },
+    orderBy: { matchNumber: "asc" },
+    select: { stage: true, round: true, matchNumber: true, playerWhiteId: true, playerBlackId: true, winnerId: true, loserId: true, status: true },
+  });
+  const of = (stage: TournamentMatchStage, round: number) => all.filter((m) => m.stage === stage && m.round === round);
+  const exists = (stage: TournamentMatchStage, round: number) => of(stage, round).length > 0;
+  const done = (stage: TournamentMatchStage, round: number) =>
+    exists(stage, round) && of(stage, round).every((m) => m.status === TournamentMatchStatus.FINISHED);
+  const winners = (stage: TournamentMatchStage, round: number) => of(stage, round).map((m) => m.winnerId!);
+  const losers = (stage: TournamentMatchStage, round: number) => of(stage, round).map((m) => m.loserId!);
+  const create = async (stage: TournamentMatchStage, round: number, pairs: { whiteId: string; blackId: string }[]) => {
+    await transaction.tournamentMatch.createMany({
+      data: pairs.map((pair, index) => ({
+        tournamentId,
+        stage,
+        round,
+        matchNumber: index + 1,
+        playerWhiteId: pair.whiteId,
+        playerBlackId: pair.blackId,
+        status: TournamentMatchStatus.WAITING,
+      })),
+    });
+  };
+
+  for (let r = 1; r < k; r += 1) {
+    if (done(TournamentMatchStage.WINNERS, r) && !exists(TournamentMatchStage.WINNERS, r + 1)) {
+      await create(TournamentMatchStage.WINNERS, r + 1, pairAdjacent(winners(TournamentMatchStage.WINNERS, r)));
+    }
+  }
+  for (let r = 1; r <= L; r += 1) {
+    if (exists(TournamentMatchStage.LOSERS, r)) continue;
+    const source = losersRoundSources(r);
+    if (source.kind === "WB_LOSERS" && done(TournamentMatchStage.WINNERS, 1)) {
+      await create(TournamentMatchStage.LOSERS, r, pairAdjacent(losers(TournamentMatchStage.WINNERS, 1)));
+    } else if (
+      source.kind === "MIX" &&
+      done(TournamentMatchStage.LOSERS, source.lbRound) &&
+      done(TournamentMatchStage.WINNERS, source.wbRound)
+    ) {
+      await create(
+        TournamentMatchStage.LOSERS,
+        r,
+        pairMixed(winners(TournamentMatchStage.LOSERS, source.lbRound), losers(TournamentMatchStage.WINNERS, source.wbRound)),
+      );
+    } else if (source.kind === "LB_WINNERS" && done(TournamentMatchStage.LOSERS, source.lbRound)) {
+      await create(TournamentMatchStage.LOSERS, r, pairAdjacent(winners(TournamentMatchStage.LOSERS, source.lbRound)));
+    }
+  }
+
+  const wbChampion = done(TournamentMatchStage.WINNERS, k) ? winners(TournamentMatchStage.WINNERS, k)[0] : undefined;
+  const lbChampion = done(TournamentMatchStage.LOSERS, L) ? winners(TournamentMatchStage.LOSERS, L)[0] : undefined;
+  if (wbChampion && lbChampion && !exists(TournamentMatchStage.GRAND_FINAL, 1)) {
+    await create(TournamentMatchStage.GRAND_FINAL, 1, [{ whiteId: wbChampion, blackId: lbChampion }]);
+    return;
+  }
+  if (!done(TournamentMatchStage.GRAND_FINAL, 1)) return;
+  const gf1 = of(TournamentMatchStage.GRAND_FINAL, 1)[0]!;
+  let champion: string;
+  let runnerUp: string;
+  if (gf1.winnerId === wbChampion) {
+    champion = gf1.winnerId!;
+    runnerUp = gf1.loserId!;
+  } else {
+    // Le champion du tableau des perdants a infligé sa première défaite : match décisif.
+    if (!exists(TournamentMatchStage.GRAND_FINAL, 2)) {
+      await create(TournamentMatchStage.GRAND_FINAL, 2, [{ whiteId: gf1.winnerId!, blackId: gf1.loserId! }]);
+      return;
+    }
+    if (!done(TournamentMatchStage.GRAND_FINAL, 2)) return;
+    const gf2 = of(TournamentMatchStage.GRAND_FINAL, 2)[0]!;
+    champion = gf2.winnerId!;
+    runnerUp = gf2.loserId!;
+  }
+
+  // Places : vainqueur, finaliste, puis éliminés du tableau des perdants (les plus tardifs d'abord).
+  const placements: { userId: string; place: number }[] = [
+    { userId: champion, place: 1 },
+    { userId: runnerUp, place: 2 },
+  ];
+  for (let r = L; r >= 1; r -= 1) {
+    const place = placements.length + 1;
+    for (const id of losers(TournamentMatchStage.LOSERS, r)) placements.push({ userId: id, place });
+  }
+  await closeTournament(transaction, tournamentId, placements);
+}
+
+// ── Arena ──────────────────────────────────────────────────────────────
+
+export async function getArenaStandings(client: Prisma.TransactionClient | typeof prisma, tournamentId: string) {
+  const [participants, matches] = await Promise.all([
+    client.tournamentParticipant.findMany({ where: { tournamentId }, select: { userId: true } }),
+    client.tournamentMatch.findMany({
+      where: { tournamentId, status: TournamentMatchStatus.FINISHED, playerBlackId: { not: null } },
+      select: { playerWhiteId: true, playerBlackId: true, winnerId: true, completedAt: true, createdAt: true },
+    }),
+  ]);
+  return arenaStandings(
+    participants.map((p) => p.userId),
+    matches.map((m) => ({
+      whiteId: m.playerWhiteId!,
+      blackId: m.playerBlackId!,
+      winnerId: m.winnerId,
+      finishedAt: m.completedAt ?? m.createdAt,
+    })),
+  );
+}
+
+async function closeArena(transaction: Prisma.TransactionClient, tournamentId: string): Promise<void> {
+  // Les appariements qui n'ont jamais donné lieu à une partie sont abandonnés.
+  await transaction.tournamentParticipant.updateMany({ where: { tournamentId }, data: { arenaWaitingSince: null } });
+  const table = await getArenaStandings(transaction, tournamentId);
+  await closeTournament(
+    transaction,
+    tournamentId,
+    table.map((row) => ({ userId: row.userId, place: row.rank })),
+  );
+}
+
+async function advanceArena(transaction: Prisma.TransactionClient, tournamentId: string): Promise<void> {
+  const tournament = await transaction.tournament.findUniqueOrThrow({
+    where: { id: tournamentId },
+    select: { endsAt: true },
+  });
+  if (tournament.endsAt && tournament.endsAt <= new Date() && !(await hasGameInProgress(transaction, tournamentId))) {
+    await closeArena(transaction, tournamentId);
+  }
+}
+
+/**
+ * Arena : le joueur se met en recherche ; s'il trouve un autre joueur en
+ * attente, un match est créé immédiatement (la partie en ligne est lancée
+ * ensuite par startTournamentGame).
+ */
+export async function arenaSearch(
+  tournamentId: string,
+  userId: string,
+): Promise<{ status: "WAITING" } | { status: "MATCHED"; tournamentMatchId: string }> {
+  return withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const tournament = await tx.tournament.findUnique({
+          where: { id: tournamentId },
+          select: { type: true, status: true, endsAt: true },
+        });
+        if (!tournament || tournament.type !== TournamentType.ARENA) {
+          throw new TournamentGameError("Arena introuvable.", 404);
+        }
+        if (tournament.status !== TournamentStatus.IN_PROGRESS) {
+          throw new TournamentGameError("L’Arena n’est pas en cours.", 409);
+        }
+        if (tournament.endsAt && tournament.endsAt <= new Date()) {
+          throw new TournamentGameError("L’Arena est terminée : plus de nouvel appariement.", 409);
+        }
+        const me = await tx.tournamentParticipant.findUnique({
+          where: { tournamentId_userId: { tournamentId, userId } },
+          select: { userId: true },
+        });
+        if (!me) throw new TournamentGameError("Vous n’êtes pas inscrit à cette Arena.", 403);
+
+        const open = await tx.tournamentMatch.findFirst({
+          where: {
+            tournamentId,
+            status: { not: TournamentMatchStatus.FINISHED },
+            OR: [{ playerWhiteId: userId }, { playerBlackId: userId }],
+          },
+          select: { id: true },
+        });
+        if (open) return { status: "MATCHED" as const, tournamentMatchId: open.id };
+
+        const lastOpponentOf = async (id: string) => {
+          const last = await tx.tournamentMatch.findFirst({
+            where: { tournamentId, OR: [{ playerWhiteId: id }, { playerBlackId: id }] },
+            orderBy: { createdAt: "desc" },
+            select: { playerWhiteId: true, playerBlackId: true },
+          });
+          if (!last) return null;
+          return last.playerWhiteId === id ? last.playerBlackId : last.playerWhiteId;
+        };
+
+        const waiting = await tx.tournamentParticipant.findMany({
+          where: { tournamentId, arenaWaitingSince: { not: null }, userId: { not: userId } },
+          select: { userId: true, arenaWaitingSince: true },
+        });
+        const candidates = [];
+        for (const w of waiting) {
+          candidates.push({ userId: w.userId, since: w.arenaWaitingSince!, lastOpponentId: await lastOpponentOf(w.userId) });
+        }
+        const opponentId = pickArenaOpponent({ userId, lastOpponentId: await lastOpponentOf(userId) }, candidates);
+        if (!opponentId) {
+          await tx.tournamentParticipant.update({
+            where: { tournamentId_userId: { tournamentId, userId } },
+            data: { arenaWaitingSince: new Date() },
+          });
+          return { status: "WAITING" as const };
+        }
+        const count = await tx.tournamentMatch.count({ where: { tournamentId } });
+        // Couleurs : le joueur qui attendait prend les blancs.
+        const created = await tx.tournamentMatch.create({
+          data: {
+            tournamentId,
+            stage: TournamentMatchStage.MAIN,
+            round: 1,
+            matchNumber: count + 1,
+            playerWhiteId: opponentId,
+            playerBlackId: userId,
+            status: TournamentMatchStatus.WAITING,
+          },
+          select: { id: true },
+        });
+        await tx.tournamentParticipant.updateMany({
+          where: { tournamentId, userId: { in: [userId, opponentId] } },
+          data: { arenaWaitingSince: null },
+        });
+        return { status: "MATCHED" as const, tournamentMatchId: created.id };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
+}
+
+export async function arenaCancelSearch(tournamentId: string, userId: string): Promise<void> {
+  await prisma.tournamentParticipant.updateMany({
+    where: { tournamentId, userId },
+    data: { arenaWaitingSince: null },
+  });
 }
 
 /** Classement courant d'un tournoi à points. */
@@ -643,6 +1121,125 @@ async function advanceStandingsTournament(
     transaction,
     tournamentId,
     standings.map((row) => ({ userId: row.userId, place: row.rank })),
+  );
+}
+
+/**
+ * Lance un tournoi : fige les règles, calcule la cagnotte sur les inscrits
+ * réels et crée les premiers appariements selon le format.
+ */
+async function startTournamentInTransaction(
+  transaction: Prisma.TransactionClient,
+  tournamentId: string,
+): Promise<void> {
+  const tournament = await transaction.tournament.findUniqueOrThrow({
+    where: { id: tournamentId },
+    select: {
+      id: true,
+      type: true,
+      isPaid: true,
+      entryFee: true,
+      durationDays: true,
+      durationMinutes: true,
+      participants: { select: { userId: true, seed: true } },
+    },
+  });
+  const participants = tournament.participants;
+    const gross = tournament.entryFee.mul(participants.length);
+    const rules = await getSettings([
+      "platform_fee_percentage",
+      "tournaments.freezeRulesOnStart",
+      "survival_bank_rebuy_cost",
+      "survival_bank_min_bet",
+      "survival_bank_max_bet",
+      "points.classic.winBase",
+      "points.classic.pieceBonusCap",
+      "tournaments.swissRounds",
+      "tournaments.prizeSplitPercent",
+      "survival.moneyGainCommissionPercent",
+      "tournaments.groupSize",
+      "tournaments.groupQualifiers",
+    ] as const);
+    const feePercent = rules["platform_fee_percentage"];
+    const isSurvival = tournament.type === TournamentType.SURVIVAL_BANK;
+    const platformFee = tournament.isPaid && !isSurvival
+      ? gross.mul(new Prisma.Decimal(feePercent)).div(100).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+      : new Prisma.Decimal(0);
+    const startedAt = new Date();
+    await transaction.tournament.update({
+      where: { id: tournament.id },
+      data: {
+        status: TournamentStatus.IN_PROGRESS,
+        startedAt,
+        // Survival : pas de cagnotte, les mises restent dans les portefeuilles.
+        totalPrizePool: isSurvival ? new Prisma.Decimal(0) : gross.minus(platformFee),
+        platformFee,
+        endsAt:
+          isSurvival && tournament.durationDays
+            ? new Date(startedAt.getTime() + tournament.durationDays * 24 * 60 * 60 * 1000)
+            : tournament.type === TournamentType.ARENA && tournament.durationMinutes
+              ? new Date(startedAt.getTime() + tournament.durationMinutes * 60 * 1000)
+              : null,
+        // Règles figées : toute modification ultérieure des paramètres
+        // n'affecte pas un tournoi déjà lancé.
+        ...(rules["tournaments.freezeRulesOnStart"]
+          ? {
+              configSnapshot: {
+                frozenAt: new Date().toISOString(),
+                platformFeePercent: feePercent,
+                survivalRebuyCost: rules["survival_bank_rebuy_cost"],
+                survivalMinBet: rules["survival_bank_min_bet"],
+                survivalMaxBet: rules["survival_bank_max_bet"],
+                pointsWinBase: rules["points.classic.winBase"],
+                pointsPieceBonusCap: rules["points.classic.pieceBonusCap"],
+                swissRounds: rules["tournaments.swissRounds"],
+                prizeSplitPercent: rules["tournaments.prizeSplitPercent"],
+                survivalGainCommissionPercent: rules["survival.moneyGainCommissionPercent"],
+                groupSize: rules["tournaments.groupSize"],
+                groupQualifiers: rules["tournaments.groupQualifiers"],
+              },
+            }
+          : {}),
+      },
+    });
+    await createOpeningRound(
+      transaction,
+      tournament.id,
+      participants,
+      tournament.type,
+    );
+}
+
+/** Démarrage anticipé décidé par l'organisateur (formats qui n'exigent pas un tableau complet). */
+export async function startTournamentNow(tournamentId: string, actorId: string): Promise<void> {
+  await withSerializableRetry(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const [tournament, actor] = await Promise.all([
+          tx.tournament.findUnique({
+            where: { id: tournamentId },
+            select: { creatorId: true, status: true, type: true, _count: { select: { participants: true } } },
+          }),
+          tx.user.findUnique({ where: { id: actorId }, select: { isAdmin: true } }),
+        ]);
+        if (!tournament) throw new TournamentGameError("Tournoi introuvable.", 404);
+        if (tournament.creatorId !== actorId && !actor?.isAdmin) {
+          throw new TournamentGameError("Seul l’organisateur peut lancer le tournoi.", 403);
+        }
+        if (tournament.status !== TournamentStatus.OPEN) {
+          throw new TournamentGameError("Le tournoi n’est plus en inscription.", 409);
+        }
+        if (!EARLY_START_TYPES.has(tournament.type)) {
+          throw new TournamentGameError("Ce format démarre automatiquement quand il est complet.", 409);
+        }
+        const minimum = tournament.type === TournamentType.SURVIVAL_BANK || tournament.type === TournamentType.ARENA ? 2 : 3;
+        if (tournament._count.participants < minimum) {
+          throw new TournamentGameError(`Il faut au moins ${minimum} inscrits pour démarrer.`, 409);
+        }
+        await startTournamentInTransaction(tx, tournamentId);
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
   );
 }
 
@@ -845,63 +1442,7 @@ async function registerTournamentPlayerInTransaction(
   }
   const joinedCount = seed;
   if (joinedCount === tournament.maxPlayers) {
-    const gross = tournament.entryFee.mul(tournament.maxPlayers);
-    const rules = await getSettings([
-      "platform_fee_percentage",
-      "tournaments.freezeRulesOnStart",
-      "survival_bank_rebuy_cost",
-      "survival_bank_min_bet",
-      "survival_bank_max_bet",
-      "points.classic.winBase",
-      "points.classic.pieceBonusCap",
-      "tournaments.swissRounds",
-      "tournaments.prizeSplitPercent",
-      "survival.moneyGainCommissionPercent",
-    ] as const);
-    const feePercent = rules["platform_fee_percentage"];
-    const isSurvival = tournament.type === TournamentType.SURVIVAL_BANK;
-    const platformFee = tournament.isPaid && !isSurvival
-      ? gross.mul(new Prisma.Decimal(feePercent)).div(100).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
-      : new Prisma.Decimal(0);
-    const startedAt = new Date();
-    await transaction.tournament.update({
-      where: { id: tournament.id },
-      data: {
-        status: TournamentStatus.IN_PROGRESS,
-        startedAt,
-        // Survival : pas de cagnotte, les mises restent dans les portefeuilles.
-        totalPrizePool: isSurvival ? new Prisma.Decimal(0) : gross.minus(platformFee),
-        platformFee,
-        endsAt:
-          isSurvival && tournament.durationDays
-            ? new Date(startedAt.getTime() + tournament.durationDays * 24 * 60 * 60 * 1000)
-            : null,
-        // Règles figées : toute modification ultérieure des paramètres
-        // n'affecte pas un tournoi déjà lancé.
-        ...(rules["tournaments.freezeRulesOnStart"]
-          ? {
-              configSnapshot: {
-                frozenAt: new Date().toISOString(),
-                platformFeePercent: feePercent,
-                survivalRebuyCost: rules["survival_bank_rebuy_cost"],
-                survivalMinBet: rules["survival_bank_min_bet"],
-                survivalMaxBet: rules["survival_bank_max_bet"],
-                pointsWinBase: rules["points.classic.winBase"],
-                pointsPieceBonusCap: rules["points.classic.pieceBonusCap"],
-                swissRounds: rules["tournaments.swissRounds"],
-                prizeSplitPercent: rules["tournaments.prizeSplitPercent"],
-                survivalGainCommissionPercent: rules["survival.moneyGainCommissionPercent"],
-              },
-            }
-          : {}),
-      },
-    });
-    await createOpeningRound(
-      transaction,
-      tournament.id,
-      [...tournament.participants, { userId, seed }],
-      tournament.type,
-    );
+    await startTournamentInTransaction(transaction, tournament.id);
   }
 
   const updatedUser = await transaction.user.findUniqueOrThrow({
@@ -1053,6 +1594,8 @@ function splitPointPrizePool(total: number, split: [number, number, number]): [n
 async function finishTournament(
   transaction: Prisma.TransactionClient,
   tournamentId: string,
+  bracketStage: TournamentMatchStage = TournamentMatchStage.MAIN,
+  bracketSize?: number,
 ): Promise<void> {
   const tournament = await transaction.tournament.findUniqueOrThrow({
     where: { id: tournamentId },
@@ -1064,7 +1607,7 @@ async function finishTournament(
       totalPrizePool: true,
       type: true,
       bracketMatches: {
-        where: { stage: TournamentMatchStage.MAIN },
+        where: { stage: bracketStage },
         orderBy: [{ round: "desc" }, { matchNumber: "asc" }],
         select: {
           round: true,
@@ -1077,7 +1620,7 @@ async function finishTournament(
       },
     },
   });
-  const rounds = Math.log2(tournament.maxPlayers);
+  const rounds = Math.log2(bracketSize ?? tournament.maxPlayers);
   const final = tournament.bracketMatches.find(
     (match) => match.round === rounds && match.matchNumber === 1,
   );
@@ -1088,15 +1631,20 @@ async function finishTournament(
     },
     select: { winnerId: true, loserId: true },
   });
-  if (!final?.winnerId || !final.loserId || !bronze?.winnerId || !bronze.loserId) {
-    return;
-  }
+  if (!final?.winnerId || !final.loserId) return;
+  // Tableau de 2 (finale directe) : pas de petite finale.
+  const needsBronze = (bracketSize ?? tournament.maxPlayers) >= 4;
+  if (needsBronze && (!bronze?.winnerId || !bronze.loserId)) return;
 
   await closeTournament(transaction, tournamentId, [
     { userId: final.winnerId, place: 1 },
     { userId: final.loserId, place: 2 },
-    { userId: bronze.winnerId, place: 3 },
-    { userId: bronze.loserId, place: 4 },
+    ...(needsBronze && bronze?.winnerId && bronze.loserId
+      ? [
+          { userId: bronze.winnerId, place: 3 },
+          { userId: bronze.loserId, place: 4 },
+        ]
+      : []),
   ]);
 }
 
@@ -1240,7 +1788,8 @@ async function closeTournament(
       });
     }
   } else {
-    const total = tournament.entryPoints * tournament.maxPlayers;
+    const registered = await transaction.tournamentParticipant.count({ where: { tournamentId } });
+    const total = tournament.entryPoints * registered;
     const prizes = splitPointPrizePool(total, split);
     for (let index = 0; index < Math.min(3, placements.length); index += 1) {
       const prize = prizes[index]!;
@@ -1328,7 +1877,12 @@ export async function recordValidatedTournamentResult(
           );
         }
         const survivalFormat = match.tournament.type === TournamentType.SURVIVAL_BANK;
-        if (winnerId === null && !standingsFormat && !survivalFormat) {
+        const drawAllowed =
+          standingsFormat ||
+          survivalFormat ||
+          match.tournament.type === TournamentType.ARENA ||
+          match.stage === TournamentMatchStage.GROUP;
+        if (winnerId === null && !drawAllowed) {
           throw new TournamentEconomyError(
             "Une élimination directe ne peut pas se terminer par une nulle : rejouez la partie.",
             "INVALID_RESULT",
@@ -1569,108 +2123,150 @@ export async function recordValidatedTournamentResult(
           return;
         }
 
-        if (match.stage === TournamentMatchStage.THIRD_PLACE) {
-          await finishTournament(transaction, match.tournamentId);
+        if (match.tournament.type === TournamentType.ARENA) {
+          await advanceArena(transaction, match.tournamentId);
           return;
         }
-
-        const currentRoundMatches = await transaction.tournamentMatch.findMany({
-          where: {
-            tournamentId: match.tournamentId,
-            stage: TournamentMatchStage.MAIN,
-            round: match.round,
-          },
-          orderBy: { matchNumber: "asc" },
-          select: {
-            round: true,
-            matchNumber: true,
-            playerWhiteId: true,
-            playerBlackId: true,
-            winnerId: true,
-            loserId: true,
-            status: true,
-          },
-        });
-        if (
-          currentRoundMatches.some(
-            (item) => item.status !== TournamentMatchStatus.FINISHED,
-          )
-        ) {
+        if (match.tournament.type === TournamentType.DOUBLE_ELIMINATION) {
+          await progressDoubleElimination(transaction, match.tournamentId);
           return;
         }
-
-        const eliminatedPlace =
-          Math.floor(match.tournament.maxPlayers / 2 ** match.round) + 1;
-        const losers = currentRoundMatches.flatMap((item) =>
-          item.loserId ? [item.loserId] : [],
-        );
-        for (const loser of losers) {
-          await transaction.tournamentParticipant.update({
-            where: {
-              tournamentId_userId: {
-                tournamentId: match.tournamentId,
-                userId: loser,
-              },
-            },
-            data: { placement: eliminatedPlace },
-          });
-        }
-
-        const finalRound = Math.log2(match.tournament.maxPlayers);
-        const winners = currentRoundMatches.flatMap((item) =>
-          item.winnerId ? [item.winnerId] : [],
-        );
-        if (match.round === finalRound) {
-          await finishTournament(transaction, match.tournamentId);
-          return;
-        }
-        if (match.round === finalRound - 1) {
-          if (winners.length !== 2 || losers.length !== 2) {
-            throw new TournamentEconomyError(
-              "Les demi-finales ne permettent pas de générer la finale.",
-              "INVALID_RESULT",
-            );
+        if (match.tournament.type === TournamentType.GROUPS_ELIMINATION) {
+          if (match.stage === TournamentMatchStage.GROUP) {
+            await advanceGroupStage(transaction, match.tournamentId);
+            return;
           }
-          await transaction.tournamentMatch.createMany({
-            data: [
-              {
-                tournamentId: match.tournamentId,
-                stage: TournamentMatchStage.MAIN,
-                round: finalRound,
-                matchNumber: 1,
-                playerWhiteId: winners[0]!,
-                playerBlackId: winners[1]!,
-                status: TournamentMatchStatus.WAITING,
-              },
-              {
-                tournamentId: match.tournamentId,
-                stage: TournamentMatchStage.THIRD_PLACE,
-                round: finalRound,
-                matchNumber: 1,
-                playerWhiteId: losers[0]!,
-                playerBlackId: losers[1]!,
-                status: TournamentMatchStatus.WAITING,
-              },
-            ],
-          });
+          const size = 2 * (await transaction.tournamentMatch.count({
+            where: { tournamentId: match.tournamentId, stage: TournamentMatchStage.KNOCKOUT, round: 1 },
+          }));
+          await advanceKnockout(transaction, match.tournamentId, TournamentMatchStage.KNOCKOUT, match.stage, match.round, size);
           return;
         }
-
-        await transaction.tournamentMatch.createMany({
-          data: Array.from({ length: winners.length / 2 }, (_, index) => ({
-            tournamentId: match.tournamentId,
-            stage: TournamentMatchStage.MAIN,
-            round: match.round + 1,
-            matchNumber: index + 1,
-            playerWhiteId: winners[index * 2]!,
-            playerBlackId: winners[index * 2 + 1]!,
-            status: TournamentMatchStatus.WAITING,
-          })),
-        });
+        await advanceKnockout(
+          transaction,
+          match.tournamentId,
+          TournamentMatchStage.MAIN,
+          match.stage,
+          match.round,
+          match.tournament.maxPlayers,
+        );
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     ),
   );
+}
+
+/**
+ * Avancement d'un tableau à élimination directe (élimination simple ou phase
+ * finale après les groupes) : tour suivant, puis finale et petite finale.
+ */
+async function advanceKnockout(
+  transaction: Prisma.TransactionClient,
+  tournamentId: string,
+  bracketStage: TournamentMatchStage,
+  matchStage: TournamentMatchStage,
+  matchRound: number,
+  bracketSize: number,
+): Promise<void> {
+  const match = { tournamentId, round: matchRound, stage: matchStage, tournament: { maxPlayers: bracketSize } };
+  if (match.stage === TournamentMatchStage.THIRD_PLACE) {
+    await finishTournament(transaction, match.tournamentId, bracketStage, bracketSize);
+    return;
+  }
+
+  const currentRoundMatches = await transaction.tournamentMatch.findMany({
+    where: {
+      tournamentId: match.tournamentId,
+      stage: bracketStage,
+      round: match.round,
+    },
+    orderBy: { matchNumber: "asc" },
+    select: {
+      round: true,
+      matchNumber: true,
+      playerWhiteId: true,
+      playerBlackId: true,
+      winnerId: true,
+      loserId: true,
+      status: true,
+    },
+  });
+  if (
+    currentRoundMatches.some(
+      (item) => item.status !== TournamentMatchStatus.FINISHED,
+    )
+  ) {
+    return;
+  }
+
+  const eliminatedPlace =
+    Math.floor(match.tournament.maxPlayers / 2 ** match.round) + 1;
+  const losers = currentRoundMatches.flatMap((item) =>
+    item.loserId ? [item.loserId] : [],
+  );
+  for (const loser of losers) {
+    await transaction.tournamentParticipant.update({
+      where: {
+        tournamentId_userId: {
+          tournamentId: match.tournamentId,
+          userId: loser,
+        },
+      },
+      data: { placement: eliminatedPlace },
+    });
+  }
+
+  const finalRound = Math.log2(match.tournament.maxPlayers);
+  const winners = currentRoundMatches.flatMap((item) =>
+    item.winnerId ? [item.winnerId] : [],
+  );
+  if (match.round === finalRound) {
+    await finishTournament(transaction, match.tournamentId, bracketStage, bracketSize);
+    return;
+  }
+  if (match.round === finalRound - 1) {
+    if (winners.length !== 2 || losers.length !== 2) {
+      throw new TournamentEconomyError(
+        "Les demi-finales ne permettent pas de générer la finale.",
+        "INVALID_RESULT",
+      );
+    }
+    await transaction.tournamentMatch.createMany({
+      data: [
+        {
+          tournamentId: match.tournamentId,
+          stage: bracketStage,
+          round: finalRound,
+          matchNumber: 1,
+          playerWhiteId: winners[0]!,
+          playerBlackId: winners[1]!,
+          status: TournamentMatchStatus.WAITING,
+        },
+        {
+          tournamentId: match.tournamentId,
+          stage: TournamentMatchStage.THIRD_PLACE,
+          round: finalRound,
+          matchNumber: 1,
+          playerWhiteId: losers[0]!,
+          playerBlackId: losers[1]!,
+          status: TournamentMatchStatus.WAITING,
+        },
+      ],
+    });
+    return;
+  }
+
+  await transaction.tournamentMatch.createMany({
+    data: Array.from({ length: winners.length / 2 }, (_, index) => ({
+      tournamentId: match.tournamentId,
+      stage: bracketStage,
+      round: match.round + 1,
+      matchNumber: index + 1,
+      playerWhiteId: winners[index * 2]!,
+      playerBlackId: winners[index * 2 + 1]!,
+      status: TournamentMatchStatus.WAITING,
+    })),
+  });
 }
 
 export class TournamentGameError extends Error {
@@ -1696,7 +2292,7 @@ export async function startTournamentGame(tournamentMatchId: string, userId: str
           where: { id: tournamentMatchId },
           include: {
             tournament: {
-              select: { status: true, gameType: true, draughtsVariant: true, timeControlMinutes: true },
+              select: { status: true, gameType: true, draughtsVariant: true, timeControlMinutes: true, endsAt: true },
             },
             games: { where: { status: MatchStatus.IN_PROGRESS }, select: { id: true } },
           },
@@ -1712,6 +2308,9 @@ export async function startTournamentGame(tournamentMatchId: string, userId: str
           throw new TournamentGameError("Ce match est terminé ou le tournoi n’est pas en cours.", 409);
         }
         if (tm.games[0]) return { matchId: tm.games[0].id };
+        if (tm.tournament.endsAt && tm.tournament.endsAt <= new Date()) {
+          throw new TournamentGameError("Le tournoi est arrivé à son terme : plus aucune nouvelle partie.", 409);
+        }
 
         const busy = await tx.match.findFirst({
           where: {
@@ -1779,7 +2378,7 @@ export async function reportTournamentGame(matchId: string): Promise<void> {
       status: true,
       winnerId: true,
       tournamentMatchId: true,
-      tournamentMatch: { select: { status: true, tournament: { select: { type: true } } } },
+      tournamentMatch: { select: { status: true, stage: true, tournament: { select: { type: true } } } },
     },
   });
   if (!game?.tournamentMatchId || !game.tournamentMatch) return;
@@ -1788,7 +2387,9 @@ export async function reportTournamentGame(matchId: string): Promise<void> {
 
   const drawAllowed =
     STANDINGS_TYPES.has(game.tournamentMatch.tournament.type) ||
-    game.tournamentMatch.tournament.type === TournamentType.SURVIVAL_BANK;
+    game.tournamentMatch.tournament.type === TournamentType.SURVIVAL_BANK ||
+    game.tournamentMatch.tournament.type === TournamentType.ARENA ||
+    game.tournamentMatch.stage === TournamentMatchStage.GROUP;
   if (game.winnerId === null && !drawAllowed) {
     await prisma.$transaction([
       prisma.match.update({ where: { id: matchId }, data: { tournamentMatchId: null } }),
