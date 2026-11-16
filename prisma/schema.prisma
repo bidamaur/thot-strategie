@@ -16,6 +16,12 @@ model User {
   isPremium                Boolean                 @default(false)
   pointsFree               Float                   @default(0)
   walletReal               Decimal                 @default(0) @db.Decimal(12, 2)
+  /// Points argent bloqués (mises en cours) — jamais dépensables directement.
+  walletLocked             Decimal                 @default(0) @db.Decimal(12, 2)
+  /// Autorisation explicite (vérification/KYC) pour les parties rémunérées.
+  moneyVerified            Boolean                 @default(false)
+  premiumExpiresAt         DateTime?
+  bio                      String?                 @db.VarChar(280)
   elo                      Int                     @default(1200)
   createdAt                DateTime                @default(now())
   draughtsVariant          DraughtsVariant         @default(INTERNATIONAL)
@@ -29,9 +35,14 @@ model User {
   aiGameRewards            AiGameReward[]
   walletTransactions       BalanceTransaction[]
   proposedBets             Match[]                 @relation("MatchBetProposer")
+  proposedGameBets         GameBet[]               @relation("GameBetProposer")
+  opponentGameBets         GameBet[]               @relation("GameBetOpponent")
   blackMatches             Match[]                 @relation("BlackPlayer")
   whiteMatches             Match[]                 @relation("WhitePlayer")
   wonMatches               Match[]                 @relation("MatchWinner")
+  playerRatings            PlayerRating[]
+  ratingHistory            RatingHistory[]
+  gameBetTransactions      GameBetTransaction[]
   mockPayments             MockPayment[]
   tournaments              Tournament[]            @relation("TournamentCreator")
   tournamentInvitations    TournamentInvitation[]
@@ -45,6 +56,9 @@ model User {
   tournamentBets           TournamentBet[]
   tournamentConfigs        TournamentConfig[]
   sessions                 UserSession[]
+  auditLogs                AuditLog[]
+  clubsOwned               Club[]                  @relation("ClubOwner")
+  clubMemberships          ClubMember[]
 }
 
 model UserSession {
@@ -86,6 +100,15 @@ model Match {
   eloDeltaWhite        Int?
   eloDeltaBlack        Int?
   updatedAt            DateTime         @default(now()) @updatedAt
+  /// Mode de jeu : CASUAL (amical), RATED (classé ELO), MONEY (rémunéré).
+  mode                 MatchMode        @default(CASUAL)
+  /// Mise en points argent par joueur (mode MONEY uniquement).
+  stakeAmount          Decimal?         @db.Decimal(12, 2)
+  stakeCommission      Decimal?         @db.Decimal(12, 2)
+  ratingPool           String?
+  gameBet              GameBet?
+  resultRecord         MatchResult?
+  ratingHistory        RatingHistory[]
   betProposedBy        User?            @relation("MatchBetProposer", fields: [betProposedById], references: [id], onUpdate: NoAction)
   playerBlack          User?            @relation("BlackPlayer", fields: [playerBlackId], references: [id])
   playerWhite          User             @relation("WhitePlayer", fields: [playerWhiteId], references: [id])
@@ -96,27 +119,98 @@ model Match {
   @@index([playerBlackId])
   @@index([rated])
   @@index([betStatus])
+  @@index([mode, status])
 }
 
-/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
-// model PlayerRating {
-// }
+model PlayerRating {
+  id               String   @id @default(cuid())
+  userId           String
+  variant          String
+  timeControl      String?
+  eloRating        Int      @default(1200)
+  gamesPlayed      Int      @default(0)
+  wins             Int      @default(0)
+  losses           Int      @default(0)
+  draws            Int      @default(0)
+  ratingDeviation  Float    @default(350)
+  lastRatingUpdate DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
-// model RatingHistory {
-// }
+  @@unique([userId, variant, timeControl])
+  @@index([variant, eloRating])
+  @@index([userId])
+}
 
-/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
-// model GameBet {
-// }
+model RatingHistory {
+  id                    String               @id @default(cuid())
+  userId                String
+  variant               String
+  timeControl           String?
+  oldRating             Int
+  newRating             Int
+  change                Int
+  reason                RatingChangeReason
+  matchId               String?
+  opponentId            String?
+  opponentRatingBefore  Int?
+  createdAt             DateTime             @default(now())
+  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  match                 Match?               @relation(fields: [matchId], references: [id], onDelete: SetNull)
 
-/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
-// model GameBetTransaction {
-// }
+  @@index([userId, createdAt])
+  @@index([matchId])
+}
 
-/// We could not retrieve columns for the underlying table. Either it has none or you are missing rights to see them. Please check your privileges.
-// model MatchResult {
-// }
+model GameBet {
+  id                String                 @id @default(cuid())
+  matchId           String                 @unique
+  proposerId        String
+  opponentId        String
+  amount            Int
+  status            BetStatus              @default(PROPOSED)
+  proposedAt        DateTime               @default(now())
+  acceptedAt        DateTime?
+  settledAt         DateTime?
+  counterProposal   Int?
+  counterProposedBy String?
+  match             Match                  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  proposer          User                   @relation("GameBetProposer", fields: [proposerId], references: [id], onDelete: Cascade)
+  opponent          User                   @relation("GameBetOpponent", fields: [opponentId], references: [id], onDelete: Cascade)
+  transactions      GameBetTransaction[]
+
+  @@index([status])
+}
+
+model GameBetTransaction {
+  id        String   @id @default(cuid())
+  betId     String
+  userId    String
+  amount    Int
+  type      String
+  createdAt DateTime @default(now())
+  bet       GameBet  @relation(fields: [betId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([betId])
+  @@index([userId, createdAt])
+}
+
+model MatchResult {
+  id               String    @id @default(cuid())
+  matchId          String    @unique
+  whiteResult      GameResult
+  blackResult      GameResult
+  whitePointsChange Int
+  blackPointsChange Int
+  whiteEloChange   Int
+  blackEloChange   Int
+  betSettled       Boolean   @default(false)
+  settledAt        DateTime?
+  createdAt        DateTime  @default(now())
+  match            Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([matchId])
+}
 
 model Tournament {
   id                   String                  @id @default(cuid())
@@ -156,6 +250,10 @@ model Tournament {
   finishedAt           DateTime?
   winnerId             String?
   configSnapshot       Json?                   // Configuration figée au démarrage
+  visibility           TournamentVisibility    @default(PUBLIC)
+  clubId               String?
+  description          String?                 @db.VarChar(1000)
+  club                 Club?                   @relation(fields: [clubId], references: [id], onDelete: SetNull)
   creator              User                    @relation("TournamentCreator", fields: [creatorId], references: [id])
   invitations          TournamentInvitation[]
   bracketMatches       TournamentMatch[]
@@ -169,6 +267,7 @@ model Tournament {
   @@index([creatorId])
   @@index([type])
   @@index([status, type])
+  @@index([clubId])
 }
 
 model TournamentInvitation {
@@ -210,6 +309,7 @@ model BalanceTransaction {
 
   @@unique([userId, transactionType, referenceId])
   @@index([userId, createdAt])
+  @@index([userId, balanceType, createdAt])
 }
 
 model TournamentParticipant {
@@ -285,6 +385,25 @@ enum MatchStatus {
   IN_PROGRESS
   FINISHED
   ABANDONED
+  ABORTED
+}
+
+enum MatchMode {
+  CASUAL
+  RATED
+  MONEY
+}
+
+enum TournamentVisibility {
+  PUBLIC
+  PRIVATE
+  CLUB
+}
+
+enum ClubRole {
+  OWNER
+  ADMIN
+  MEMBER
 }
 
 enum TournamentScope {
@@ -307,6 +426,7 @@ enum BalanceType {
   FREE_POINTS
   REAL_WALLET
   BET_ESCROW
+  MONEY_LOCKED
 }
 
 enum BalanceTransactionType {
@@ -315,6 +435,7 @@ enum BalanceTransactionType {
   TOURNAMENT_PRIZE
   TOURNAMENT_POINTS_ENTRY
   TOURNAMENT_POINTS_PRIZE
+  TOURNAMENT_POINTS_REBUY
   BET_PLACED
   BET_WON
   BET_LOST
@@ -322,6 +443,12 @@ enum BalanceTransactionType {
   GAME_POINTS_WON
   GAME_POINTS_LOST
   ELO_CHANGE
+  MONEY_STAKE_LOCKED
+  MONEY_STAKE_WON
+  MONEY_STAKE_LOST
+  MONEY_STAKE_REFUNDED
+  MONEY_COMMISSION
+  ADMIN_ADJUSTMENT
 }
 
 enum GameResult {
@@ -513,5 +640,52 @@ model TournamentRound {
   @@index([tournamentId, status])
 }
 
-// Extension du modèle Tournament existant - ajouter les nouveaux champs
-// (les champs existants sont conservés)
+/// Journal d'audit des opérations sensibles (paramètres, soldes, rôles).
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String   @db.VarChar(80)
+  entity    String   @db.VarChar(80)
+  entityId  String?  @db.VarChar(120)
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now())
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
+
+model Club {
+  id          String       @id @default(cuid())
+  name        String       @unique @db.VarChar(60)
+  slug        String       @unique @db.VarChar(70)
+  description String?      @db.VarChar(1000)
+  ownerId     String
+  country     String?      @db.VarChar(80)
+  city        String?      @db.VarChar(80)
+  accentColor String?      @db.VarChar(9)
+  isPrivate   Boolean      @default(false)
+  maxMembers  Int          @default(50)
+  createdAt   DateTime     @default(now())
+  owner       User         @relation("ClubOwner", fields: [ownerId], references: [id])
+  members     ClubMember[]
+  tournaments Tournament[]
+
+  @@index([ownerId])
+  @@index([country, city])
+}
+
+model ClubMember {
+  id       String   @id @default(cuid())
+  clubId   String
+  userId   String
+  role     ClubRole @default(MEMBER)
+  joinedAt DateTime @default(now())
+  club     Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([clubId, userId])
+  @@index([userId])
+}

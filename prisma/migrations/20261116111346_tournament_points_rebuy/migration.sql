@@ -1,0 +1,1 @@
+ALTER TYPE "BalanceTransactionType" ADD VALUE 'TOURNAMENT_POINTS_REBUY';
