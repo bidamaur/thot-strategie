@@ -365,6 +365,9 @@ export const SETTING_DEFINITIONS = [
   // ── Parties ──────────────────────────────────────────────────────────
   { key: "match.abortMovesThreshold", category: "match", type: "number", default: 2, min: 0, max: 10, integer: true, label: "Annulation sans conséquence avant N coups", description: "Un abandon/déconnexion avant ce nombre de demi-coups annule la partie (aucun point, ELO ou mise)." },
   { key: "match.chatEnabled", category: "match", type: "boolean", default: true, label: "Chat en partie" },
+  { key: "match.draughtsNoProgressDrawPlies", category: "match", type: "number", default: 20, min: 0, max: 200, integer: true, label: "Dames : nul automatique après N coups sans prise ni promotion", unit: "demi-coups", description: "20 = 10 coups de chaque joueur sans prise ni pion promu dame. 0 désactive la règle." },
+  { key: "match.draughtsNoProgressRequiresKing", category: "match", type: "boolean", default: true, label: "Dames : compter seulement en fin de partie (dès qu'une dame existe)", description: "Évite de déclarer nulle une ouverture calme où personne n'a encore pris. Désactivé, le compteur tourne dès le premier coup." },
+  { key: "match.drawOfferMinProgressPercent", category: "match", type: "number", default: 70, min: 0, max: 100, integer: true, label: "Bouton « Proposer nul » actif à partir de", unit: "% de la partie", description: "Avancement mesuré par les pièces prises : 70 % = 7/10 des pièces de départ ont disparu." },
 
   // ── Tournois (clés historiques conservées) ───────────────────────────
   { key: "allowed_tournament_types", category: "tournaments", type: "json", default: ["SURVIVAL_BANK", "ARENA", "SWISS", "ROUND_ROBIN", "ELIMINATION", "DOUBLE_ELIMINATION", "GROUPS_ELIMINATION", "LEAGUE"], label: "Formats autorisés" },

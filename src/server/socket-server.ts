@@ -16,6 +16,13 @@ import { prisma } from "../lib/prisma";
 import { abortMatch, settleMatch } from "../lib/scoring/settle-match";
 import { closeExpiredTimedTournaments, reportTournamentGame } from "../lib/economy/tournaments";
 import { withSerializableRetry } from "../lib/db/retry";
+import {
+  canOfferDrawAt,
+  draughtsQuietState,
+  gameProgressPercent,
+  isNoProgressDraw,
+  type DrawRules,
+} from "../lib/engine/draw-rules";
 import { getSettings, peekSetting } from "../lib/settings/service";
 import {
   assertCanQueueForMoney,
@@ -335,6 +342,12 @@ export function attachSocketServer(httpServer: HttpServer): Server {
     return match;
   };
 
+  const currentDrawRules = (): DrawRules => ({
+    noProgressPlies: peekSetting("match.draughtsNoProgressDrawPlies"),
+    noProgressRequiresKing: peekSetting("match.draughtsNoProgressRequiresKing"),
+    drawOfferMinProgressPercent: peekSetting("match.drawOfferMinProgressPercent"),
+  });
+
   const sendMatchState = (socket: GameSocket, match: ActiveMatch): void => {
     const isWhite = match.playerIds[0] === socket.data.playerId;
     socket.emit("match_state", {
@@ -379,6 +392,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       timeControlMinutes: match.timeControlMinutes,
       chatEnabled: peekSetting("match.chatEnabled"),
       tournamentId: match.tournamentId,
+      drawRules: currentDrawRules(),
     });
   };
 
@@ -503,7 +517,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       | "RESIGNATION"
       | "DISCONNECT_FORFEIT"
       | "TIME_OUT"
-      | "NO_SHOW",
+      | "NO_SHOW"
+      | "NO_PROGRESS_DRAW",
   ): Promise<boolean> => {
     if (match.status !== "IN_PROGRESS" || match.processingAction) return false;
     match.processingAction = true;
@@ -539,6 +554,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       if (
         reason !== "GAME_OVER" &&
         reason !== "DRAW_OFFER" &&
+        reason !== "NO_PROGRESS_DRAW" &&
         reason !== "NO_SHOW" &&
         match.moves.length < abortThreshold
       ) {
@@ -814,6 +830,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       let normalizedMove: OnlinePly;
       let isFinished = false;
       let winnerId: string | null = null;
+      // Dames : nul automatique après N demi-coups sans prise ni promotion.
+      let noProgressDraw = false;
 
       if (match.gameType === "CHESS") {
         if (
@@ -894,6 +912,15 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         normalizedMove = move;
         isFinished = getLegalDraughtsMoves(nextPosition).length === 0;
         winnerId = isFinished ? playerId : null;
+        if (!isFinished) {
+          const history = [...match.moves, move].filter(
+            (ply): ply is Extract<OnlinePly, { kind: "CHECKERS" }> => ply.kind === "CHECKERS",
+          );
+          noProgressDraw = isNoProgressDraw(
+            draughtsQuietState(match.draughtsVariant ?? "INTERNATIONAL", history),
+            currentDrawRules(),
+          );
+        }
       }
 
       const moves = [...match.moves, normalizedMove];
@@ -916,6 +943,10 @@ export function attachSocketServer(httpServer: HttpServer): Server {
 
       if (isFinished) {
         if (!(await finishMatch(match, winnerId, "GAME_OVER"))) {
+          throw new Error("La partie n’a pas pu être clôturée.");
+        }
+      } else if (noProgressDraw) {
+        if (!(await finishMatch(match, null, "NO_PROGRESS_DRAW"))) {
           throw new Error("La partie n’a pas pu être clôturée.");
         }
       } else {
@@ -2419,9 +2450,15 @@ export function attachSocketServer(httpServer: HttpServer): Server {
             });
             return;
           }
-          if (getRemainingPieces(match).total >= 6) {
+          const drawRules = currentDrawRules();
+          const progress = gameProgressPercent(
+            match.gameType,
+            match.draughtsVariant,
+            getRemainingPieces(match).total,
+          );
+          if (!canOfferDrawAt(progress, drawRules)) {
             socket.emit("server_error", {
-              message: "Le match nul peut être demandé quand il reste moins de 6 pions.",
+              message: `Le match nul peut être proposé à partir de ${drawRules.drawOfferMinProgressPercent} % de la partie (actuellement ${progress} %).`,
             });
             return;
           }

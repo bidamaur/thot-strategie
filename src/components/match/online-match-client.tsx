@@ -36,6 +36,13 @@ import {
   type DraughtsCoordinate,
   type DraughtsPosition,
 } from "@/lib/engine/draughts";
+import {
+  canOfferDrawAt,
+  draughtsQuietState,
+  gameProgressPercent,
+  noProgressCounterActive,
+  type DrawRules,
+} from "@/lib/engine/draw-rules";
 import { playPieceMoveSound } from "@/lib/game-feedback";
 import type {
   ClientToServerEvents,
@@ -78,7 +85,9 @@ interface MatchState {
   betAmount: number | null;
   betStatus: "PROPOSED" | "ACCEPTED" | "REJECTED" | "COUNTERED" | null;
   betProposedById: string | null;
+  drawRules?: DrawRules;
   finishReason?:
+    | "NO_PROGRESS_DRAW"
     | "GAME_OVER"
     | "DRAW_OFFER"
     | "RESIGNATION"
@@ -490,9 +499,34 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
     (chessGame?.turn() ?? draughtsPosition?.turn) === match?.playerColor &&
     !pendingMove &&
     !pendingAction;
+  // Règles de nullité envoyées par le serveur (valeurs par défaut le temps de les recevoir).
+  const drawRules: DrawRules = match?.drawRules ?? {
+    noProgressPlies: 20,
+    noProgressRequiresKing: true,
+    drawOfferMinProgressPercent: 70,
+  };
+  const progressPercent = match
+    ? gameProgressPercent(match.gameType, match.draughtsVariant, remainingPieceCount)
+    : 0;
+  const drawOfferUnlocked = canOfferDrawAt(progressPercent, drawRules);
+  const quietState = useMemo(() => {
+    if (match?.gameType !== "CHECKERS") return null;
+    try {
+      return draughtsQuietState(
+        match.draughtsVariant ?? "INTERNATIONAL",
+        match.moves.filter(
+          (ply): ply is Extract<OnlinePly, { kind: "CHECKERS" }> => ply.kind === "CHECKERS",
+        ),
+      );
+    } catch {
+      return null;
+    }
+  }, [match]);
+  const quietCounterShown =
+    quietState !== null && noProgressCounterActive(quietState, drawRules) && quietState.quietPlies > 0;
   const canOfferDraw =
     match?.status === "IN_PROGRESS" &&
-    remainingPieceCount < 6 &&
+    drawOfferUnlocked &&
     !match.drawOfferById &&
     socketConnected &&
     !pendingAction;
@@ -789,6 +823,8 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               : "Vous ne vous êtes pas présenté à temps : défaite par forfait."
           : match.finishReason === "DRAW_OFFER"
             ? "La proposition de match nul a été acceptée."
+          : match.finishReason === "NO_PROGRESS_DRAW"
+            ? `Match nul automatique : ${drawRules.noProgressPlies} coups joués sans prise ni nouvelle dame.`
             : "Le résultat de la partie a été enregistré côté serveur.";
   const pointsChange =
     typeof match.pointsChange === "number" && Number.isFinite(match.pointsChange)
@@ -813,6 +849,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
   const respondToTime = (accept: boolean) =>
     socketRef.current?.emit("respond_time", { matchId: match.matchId, accept });
 
+  // Barre d'actions : libellés toujours visibles, état du bouton « nul » explicite.
   const actionButtons = match.status === "IN_PROGRESS" && (
     <div className="grid grid-cols-3 gap-2">
       <button
@@ -820,36 +857,76 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
         disabled={!canOfferDraw}
         onClick={offerDraw}
         title={
-          remainingPieceCount < 6
-            ? "Proposer le match nul"
-            : `Nulle possible sous 6 pièces (${remainingPieceCount})`
+          drawOfferUnlocked
+            ? "Proposer le match nul à votre adversaire"
+            : `Disponible à ${drawRules.drawOfferMinProgressPercent} % de la partie (actuellement ${progressPercent} %)`
         }
-        className="btn btn-ghost px-2"
+        className="btn btn-ghost relative flex-col gap-0.5 overflow-hidden px-2 py-2 leading-tight"
       >
-        <Handshake className="size-4" />
-        <span className="hidden sm:inline">Nulle</span>
+        <span className="flex items-center gap-1.5">
+          <Handshake className="size-4 shrink-0" />
+          <span className="text-sm">Nul</span>
+        </span>
+        {!drawOfferUnlocked && (
+          <>
+            <span className="tabular text-[11px] font-normal text-ink-muted">
+              à {drawRules.drawOfferMinProgressPercent} % · {progressPercent} %
+            </span>
+            <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 bg-line">
+              <span
+                className="block h-full bg-accent/70 transition-[width]"
+                style={{ width: `${Math.min(100, (progressPercent / Math.max(1, drawRules.drawOfferMinProgressPercent)) * 100)}%` }}
+              />
+            </span>
+          </>
+        )}
       </button>
       <button
         type="button"
         disabled={!socketConnected || pendingAction}
         onClick={resignMatch}
-        className="btn btn-danger px-2"
+        className="btn btn-danger gap-1.5 px-2 py-2"
       >
-        <Flag className="size-4" />
-        <span className="hidden sm:inline">Abandon</span>
+        <Flag className="size-4 shrink-0" />
+        <span className="text-sm">Abandonner</span>
       </button>
       <button
         type="button"
         disabled={!socketConnected || pendingAction || leavingMatch}
         onClick={leaveMatch}
-        className="btn btn-ghost px-2"
+        className="btn btn-ghost gap-1.5 px-2 py-2"
         title="Quitter (60 s pour revenir)"
       >
-        <LogOut className="size-4" />
-        <span className="hidden sm:inline">{leavingMatch ? "…" : "Quitter"}</span>
+        <LogOut className="size-4 shrink-0" />
+        <span className="text-sm">{leavingMatch ? "…" : "Quitter"}</span>
       </button>
     </div>
   );
+
+  // Dames : compteur vers le nul automatique (sans prise ni nouvelle dame).
+  const quietCounter =
+    match.status === "IN_PROGRESS" && quietCounterShown && quietState ? (
+      <div
+        role="status"
+        className={`card-muted px-3 py-2 text-xs ${
+          quietState.quietPlies >= drawRules.noProgressPlies * 0.75 ? "text-gold" : "text-ink-muted"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span>Coups sans prise ni nouvelle dame</span>
+          <span className="tabular font-semibold">
+            {quietState.quietPlies}/{drawRules.noProgressPlies}
+          </span>
+        </div>
+        <div aria-hidden="true" className="mt-1.5 h-1 overflow-hidden rounded-full bg-line">
+          <div
+            className="h-full rounded-full bg-gold/70 transition-[width]"
+            style={{ width: `${Math.min(100, (quietState.quietPlies / drawRules.noProgressPlies) * 100)}%` }}
+          />
+        </div>
+        <p className="mt-1">Nul automatique à {drawRules.noProgressPlies} ({drawRules.noProgressPlies / 2} coups chacun).</p>
+      </div>
+    ) : null;
 
   const drawOfferPanel =
     match.status === "IN_PROGRESS" && match.drawOfferById ? (
@@ -1088,9 +1165,10 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
 
         {playerStrip("self")}
 
-        {/* Barre d'actions compacte (toujours visible sous le plateau) */}
-        <div className="board-fit mt-1 space-y-2">
+        {/* Mobile/tablette : barre d'actions collée en bas de l'écran, toujours visible. */}
+        <div className="board-fit sticky bottom-0 z-30 mt-1 space-y-2 rounded-t-2xl bg-canvas/95 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur-md lg:hidden">
           {drawOfferPanel}
+          {quietCounter}
           <div className="flex gap-2">
             <div className="flex-1">{actionButtons}</div>
             {chatAvailable && (
@@ -1109,6 +1187,10 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               </button>
             )}
           </div>
+        </div>
+
+        {/* Messages (toutes tailles d'écran) */}
+        <div className="board-fit space-y-2 empty:hidden">
           {error && (
             <p role="alert" className="rounded-xl border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">
               {error}
@@ -1135,6 +1217,14 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
 
       {/* ── Panneau latéral : informations secondaires ────────────── */}
       <aside className="flex flex-col gap-3 lg:max-h-[calc(100dvh-7rem)]">
+        {match.status === "IN_PROGRESS" && (
+          <div className="card hidden space-y-2 p-3 lg:block">
+            <p className="eyebrow px-1">Actions de la partie</p>
+            {drawOfferPanel}
+            {quietCounter}
+            {actionButtons}
+          </div>
+        )}
         <div className="card p-4">
           <div className="flex items-center justify-between gap-2">
             <span

@@ -256,7 +256,7 @@ body {
 }
 @media (min-width: 1024px) {
   .board-fit {
-    width: min(100%, calc(100dvh - 11rem));
+    width: min(100%, calc(100dvh - 12.5rem));
   }
 }
 

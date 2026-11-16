@@ -1,3 +1,4 @@
+import type { DrawRules } from "../lib/engine/draw-rules";
 export type GameType = "CHESS" | "CHECKERS";
 
 export type MatchmakingStrategy = "RANDOM" | "TARGETED";
@@ -125,6 +126,8 @@ export interface ServerToClientEvents {
     opponentRating?: number | null;
     chatEnabled?: boolean;
     tournamentId?: string | null;
+    /** Règles de nullité en vigueur (affichage des compteurs ; le serveur décide). */
+    drawRules?: DrawRules;
   }) => void;
   move_accepted: (payload: {
     matchId: string;
@@ -151,7 +154,7 @@ export interface ServerToClientEvents {
     opponentPointsChange: number;
     opponentPointsBalance: number;
     status: "FINISHED" | "ABANDONED" | "ABORTED";
-    reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT" | "ABORTED" | "NO_SHOW";
+    reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT" | "ABORTED" | "NO_SHOW" | "NO_PROGRESS_DRAW";
     mode?: GameMode;
     moneyChange?: number;
     moneyStake?: number | null;
