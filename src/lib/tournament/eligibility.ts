@@ -1,4 +1,4 @@
-﻿import {
+import {
   Prisma,
   TournamentScope,
   TournamentStatus,
@@ -8,6 +8,8 @@
 } from "@/generated/prisma-client";
 import { prisma } from "@/lib/prisma";
 import { TournamentConfigService } from "@/lib/tournament/config";
+import { getPrivileges, SCOPE_RANK } from "@/lib/premium/privileges";
+import { getSetting } from "@/lib/settings/service";
 
 export class TournamentEligibilityError extends Error {
   constructor(
@@ -45,6 +47,8 @@ export interface CreateTournamentRequest {
   survivalBankEnabled?: boolean;
   rebuyEnabled?: boolean;
   invitedUserIds?: string[];
+  visibility?: "PUBLIC" | "PRIVATE" | "CLUB";
+  clubId?: string | null;
 }
 
 export interface JoinTournamentRequest {
@@ -54,8 +58,8 @@ export interface JoinTournamentRequest {
 
 export class TournamentEligibilityEngine {
   /**
-   * VÃ©rifie si un utilisateur peut crÃ©er un tournoi
-   * et retourne les contraintes appliquÃ©es
+   * Vérifie si un utilisateur peut créer un tournoi
+   * et retourne les contraintes appliquées
    */
   static async validateCreateTournament(
     request: CreateTournamentRequest,
@@ -75,6 +79,7 @@ export class TournamentEligibilityEngine {
         isPremium: true,
         isAdmin: true,
         premiumLevel: true,
+        premiumExpiresAt: true,
         pointsFree: true,
         country: true,
         city: true,
@@ -87,75 +92,115 @@ export class TournamentEligibilityEngine {
     }
 
     const isAdmin = user.isAdmin === true;
-    const premiumLevel = isAdmin ? 5 : (user.premiumLevel ?? 0);
-    const isPremium = user.isPremium === true || isAdmin;
+    const { privileges, level } = await getPrivileges({
+      isAdmin,
+      isPremium: user.isPremium,
+      premiumLevel: user.premiumLevel ?? 0,
+      premiumExpiresAt: user.premiumExpiresAt,
+    });
+    const isPremium = isAdmin || level > 0;
 
-    const [maxScope, minPoints, maxPlayers, allowedTypes] = await Promise.all([
-      TournamentConfigService.getPremiumScopeMax(premiumLevel),
+    const [minPoints, maxPlayers, allowedTypes, paidEnabled] = await Promise.all([
       TournamentConfigService.getMinPointsForCommunityTournament(),
       TournamentConfigService.getMaxPlayersPerTournament(),
       TournamentConfigService.getAllowedTournamentTypes(),
+      getSetting("money.tournamentsEnabled"),
     ]);
-    const scopeHierarchy: Record<string, number> = {
-      NEIGHBORHOOD: 1,
-      CITY: 2,
-      REGION: 3,
-      COUNTRY: 4,
-      CONTINENT: 5,
-      INTERNATIONAL: 6,
-    };
+    const maxScope = privileges.maxScope;
+
+    if (!allowedTypes.includes(request.type)) {
+      throw new TournamentEligibilityError(
+        "Ce format de tournoi est désactivé par l’administration.",
+        "INVALID_INPUT",
+      );
+    }
+
+    // Survival : ouvert à TOUS les joueurs disposant du minimum de points.
+    const isSurvival = request.type === TournamentType.SURVIVAL_BANK;
+    if (isSurvival) {
+      if (!isPremium && user.pointsFree < minPoints) {
+        throw new TournamentEligibilityError(
+          `Il faut au moins ${minPoints} points classiques pour organiser un tournoi Survival.`,
+          "INSUFFICIENT_POINTS",
+        );
+      }
+    } else if (!privileges.tournamentFormats.includes(request.type)) {
+      throw new TournamentEligibilityError(
+        isPremium
+          ? "Ce format n’est pas inclus dans votre niveau Premium."
+          : "Ce format est réservé aux membres Premium. Le Survival reste ouvert à tous.",
+        "PREMIUM_REQUIRED",
+      );
+    }
 
     if (
-      scopeHierarchy[request.scope] === undefined ||
-      scopeHierarchy[request.scope] > (scopeHierarchy[maxScope] ?? 0)
+      SCOPE_RANK[request.scope] === undefined ||
+      SCOPE_RANK[request.scope]! > (SCOPE_RANK[maxScope] ?? 0)
     ) {
       throw new TournamentEligibilityError(
-        `Votre niveau Premium ne permet pas une portÃ©e ${request.scope}. Maximum autorisÃ©: ${maxScope}.`,
+        `Votre niveau permet une portée maximale « ${maxScope} ».`,
         "INVALID_SCOPE",
       );
     }
 
-    if (!allowedTypes.includes(request.type)) {
-      throw new TournamentEligibilityError(
-        "Ce type de tournoi n’est pas autorisé par la configuration.",
-        "INVALID_INPUT",
-      );
-    }
-
-    // Contraintes pour les tournois communautaires (non-Premium)
-    if (!isPremium && !isAdmin) {
-      if (request.type !== TournamentType.SURVIVAL_BANK) {
+    if (request.isPaid) {
+      if (!paidEnabled) {
         throw new TournamentEligibilityError(
-          "Seuls les tournois Survival Bank sont autorisÃ©s pour les utilisateurs non Premium.",
-          "PREMIUM_REQUIRED",
+          "Les tournois payants sont désactivés par l’administration.",
+          "INVALID_INPUT",
         );
       }
-      if (request.scope !== "NEIGHBORHOOD" && request.scope !== "CITY") {
+      if (!privileges.paidTournaments) {
         throw new TournamentEligibilityError(
-          "Les tournois communautaires sont limitÃ©s Ã  une portÃ©e ville ou quartier.",
-          "INVALID_SCOPE",
-        );
-      }
-      if (user.pointsFree < minPoints) {
-        throw new TournamentEligibilityError(
-          `Vous devez avoir au moins ${minPoints} points pour crÃ©er un tournoi communautaire.`,
-          "INSUFFICIENT_POINTS",
-        );
-      }
-      if (request.isPaid) {
-        throw new TournamentEligibilityError(
-          "Les utilisateurs non Premium ne peuvent pas crÃ©er de tournois payants.",
+          "Votre niveau Premium ne permet pas d’organiser des tournois payants.",
           "PREMIUM_REQUIRED",
         );
       }
     }
 
-    // Contraintes de nombre de joueurs
-    if (request.maxPlayers < maxPlayers.min || request.maxPlayers > maxPlayers.max) {
+    if (request.visibility === "PRIVATE" && !privileges.privateTournaments) {
       throw new TournamentEligibilityError(
-        `Le nombre de joueurs doit Ãªtre entre ${maxPlayers.min} et ${maxPlayers.max}.`,
+        "Les tournois privés sont réservés aux membres Premium.",
+        "PREMIUM_REQUIRED",
+      );
+    }
+    if (request.visibility === "CLUB" || request.clubId) {
+      if (!request.clubId) {
+        throw new TournamentEligibilityError("Club requis pour un tournoi de club.", "INVALID_INPUT");
+      }
+      const membership = await prisma.clubMember.findUnique({
+        where: { clubId_userId: { clubId: request.clubId, userId: request.userId } },
+        select: { role: true },
+      });
+      if (!isAdmin && (!membership || membership.role === "MEMBER")) {
+        throw new TournamentEligibilityError(
+          "Seuls les responsables du club peuvent organiser ses tournois.",
+          "NOT_ELIGIBLE",
+        );
+      }
+    }
+
+    const capacityMax = Math.min(maxPlayers.max, privileges.maxTournamentPlayers);
+    if (request.maxPlayers < maxPlayers.min || request.maxPlayers > capacityMax) {
+      throw new TournamentEligibilityError(
+        `Le nombre de joueurs doit être compris entre ${maxPlayers.min} et ${capacityMax}.`,
         "INVALID_INPUT",
       );
+    }
+
+    if (!isAdmin) {
+      const active = await prisma.tournament.count({
+        where: {
+          creatorId: request.userId,
+          status: { in: [TournamentStatus.OPEN, TournamentStatus.IN_PROGRESS] },
+        },
+      });
+      if (active >= privileges.maxActiveTournaments) {
+        throw new TournamentEligibilityError(
+          `Vous avez déjà ${active} tournoi(s) actif(s) : limite de votre niveau atteinte.`,
+          "PREMIUM_REQUIRED",
+        );
+      }
     }
 
     return {
@@ -164,13 +209,13 @@ export class TournamentEligibilityEngine {
         maxScope,
         minPoints,
         maxPlayers,
-        canBePaid: isPremium || isAdmin,
+        canBePaid: privileges.paidTournaments && paidEnabled,
       },
     };
   }
 
   /**
-   * VÃ©rifie si un utilisateur peut rejoindre un tournoi
+   * Vérifie si un utilisateur peut rejoindre un tournoi
    */
   static async validateJoinTournament(
     request: JoinTournamentRequest,
@@ -208,7 +253,7 @@ export class TournamentEligibilityEngine {
 
     if (tournament.participants.some((p) => p.userId === request.userId)) {
       throw new TournamentEligibilityError(
-        "Vous Ãªtes dÃ©jÃ  inscrit Ã  ce tournoi.",
+        "Vous êtes déjà inscrit à ce tournoi.",
         "ALREADY_REGISTERED",
       );
     }
@@ -220,16 +265,16 @@ export class TournamentEligibilityEngine {
       );
     }
 
-    // VÃ©rifier les critÃ¨res d'Ã©ligibilitÃ© du tournoi
+    // Vérifier les critères d'éligibilité du tournoi
     if (tournament.minElo != null && user!.elo < tournament.minElo) {
       throw new TournamentEligibilityError(
-        `Votre Elo (${user!.elo}) est infÃ©rieur au minimum requis (${tournament.minElo}).`,
+        `Votre Elo (${user!.elo}) est inférieur au minimum requis (${tournament.minElo}).`,
         "NOT_ELIGIBLE",
       );
     }
     if (tournament.maxElo != null && user!.elo > tournament.maxElo) {
       throw new TournamentEligibilityError(
-        `Votre Elo (${user!.elo}) est supÃ©rieur au maximum autorisÃ© (${tournament.maxElo}).`,
+        `Votre Elo (${user!.elo}) est supérieur au maximum autorisé (${tournament.maxElo}).`,
         "NOT_ELIGIBLE",
       );
     }
@@ -241,12 +286,12 @@ export class TournamentEligibilityEngine {
     }
     if (tournament.maxPoints != null && user!.pointsFree > tournament.maxPoints) {
       throw new TournamentEligibilityError(
-        `Vous avez trop de points pour participer Ã  ce tournoi.`,
+        `Vous avez trop de points pour participer à ce tournoi.`,
         "NOT_ELIGIBLE",
       );
     }
 
-    // DÃ©terminer le coÃ»t d'inscription
+    // Déterminer le coût d'inscription
     let entryCost: { type: "POINTS" | "CFA"; amount: number };
     if (tournament.isPaid) {
       entryCost = { type: "CFA", amount: Number(tournament.entryFee) };
@@ -270,23 +315,32 @@ export class TournamentEligibilityEngine {
   }
 
   /**
-   * Inscrire un joueur Ã  un tournoi
-   * Pour les tournois Survival Bank, crÃ©e aussi le portefeuille
+   * Inscrire un joueur à un tournoi
+   * Pour les tournois Survival Bank, crée aussi le portefeuille
    */
   static async registerPlayer(request: JoinTournamentRequest) {
     const { allowed, tournament, entryCost } = await this.validateJoinTournament(request);
 
     if (!allowed) {
-      throw new TournamentEligibilityError("Inscription non autorisÃ©e.", "INVALID_INPUT");
+      throw new TournamentEligibilityError("Inscription non autorisée.", "INVALID_INPUT");
     }
 
     return prisma.$transaction(async (tx) => {
-      // DÃ©duire les frais d'inscription
+      // Déduire les frais d'inscription
       if (tournament.isPaid) {
-        await tx.user.update({
-          where: { id: request.userId },
+        const debit = await tx.user.updateMany({
+          where: {
+            id: request.userId,
+            walletReal: { gte: tournament.entryFee },
+          },
           data: { walletReal: { decrement: tournament.entryFee } },
         });
+        if (debit.count !== 1) {
+          throw new TournamentEligibilityError(
+            "Solde FCFA insuffisant pour l'inscription.",
+            "INSUFFICIENT_POINTS",
+          );
+        }
         await tx.balanceTransaction.create({
           data: {
             userId: request.userId,
@@ -294,14 +348,23 @@ export class TournamentEligibilityEngine {
             transactionType: "TOURNAMENT_ENTRY",
             amount: tournament.entryFee.negated(),
             referenceId: tournament.id,
-            description: `Droit d'entrÃ©e tournoi ${tournament.id}`,
+            description: `Droit d'entrée tournoi ${tournament.id}`,
           },
         });
       } else {
-        await tx.user.update({
-          where: { id: request.userId },
+        const debit = await tx.user.updateMany({
+          where: {
+            id: request.userId,
+            pointsFree: { gte: tournament.entryPoints },
+          },
           data: { pointsFree: { decrement: tournament.entryPoints } },
         });
+        if (debit.count !== 1) {
+          throw new TournamentEligibilityError(
+            `Vous devez avoir au moins ${tournament.entryPoints} points pour vous inscrire.`,
+            "INSUFFICIENT_POINTS",
+          );
+        }
         await tx.balanceTransaction.create({
           data: {
             userId: request.userId,
@@ -309,12 +372,12 @@ export class TournamentEligibilityEngine {
             transactionType: "TOURNAMENT_POINTS_ENTRY",
             amount: new Prisma.Decimal(-tournament.entryPoints),
             referenceId: tournament.id,
-            description: `Droit d'entrÃ©e en points tournoi ${tournament.id}`,
+            description: `Droit d'entrée en points tournoi ${tournament.id}`,
           },
         });
       }
 
-      // CrÃ©er le participant
+      // Créer le participant
       const seed = tournament.participants.length + 1;
       const participant = await tx.tournamentParticipant.create({
         data: {
@@ -325,7 +388,7 @@ export class TournamentEligibilityEngine {
         },
       });
 
-      // Si c'est un tournoi Survival Bank, crÃ©er le portefeuille
+      // Si c'est un tournoi Survival Bank, créer le portefeuille
       let wallet = null;
       if (tournament.survivalBankEnabled && tournament.initialCapital) {
         const { SurvivalBankEngine } = await import("./survival-bank");
@@ -336,7 +399,7 @@ export class TournamentEligibilityEngine {
         );
       }
 
-      // Si le tournoi est complet, le dÃ©marrer
+      // Si le tournoi est complet, le démarrer
       const joinedCount = seed;
       if (joinedCount === tournament.maxPlayers) {
         await tx.tournament.update({
@@ -359,7 +422,7 @@ export class TournamentEligibilityEngine {
   }
 
   /**
-   * RÃ©cupÃ©rer les tournois disponibles pour un utilisateur
+   * Récupérer les tournois disponibles pour un utilisateur
    */
   static async getAvailableTournaments(userId: string) {
     const user = await prisma.user.findUnique({
@@ -379,31 +442,17 @@ export class TournamentEligibilityEngine {
       orderBy: { createdAt: "desc" },
     });
 
-    const isAdmin = user.isAdmin === true;
-    const premiumLevel = isAdmin ? 5 : (user.premiumLevel ?? 0);
-    const scopeHierarchy: Record<string, number> = {
-      NEIGHBORHOOD: 1,
-      CITY: 2,
-      REGION: 3,
-      COUNTRY: 4,
-      CONTINENT: 5,
-      INTERNATIONAL: 6,
-    };
-    const maxScope = await TournamentConfigService.getPremiumScopeMax(premiumLevel);
-
     return tournaments
       .filter((t) => {
-        // Filtrer par portÃ©e
-        if (scopeHierarchy[t.scope] > (scopeHierarchy[maxScope] ?? 0)) return false;
-        // Filtrer par capacitÃ©
+        // Filtrer par capacité
         if (t._count.participants >= t.maxPlayers) return false;
-        // Filtrer par critÃ¨res Elo
+        // Filtrer par critères Elo
         if (t.minElo != null && user.elo < t.minElo) return false;
         if (t.maxElo != null && user.elo > t.maxElo) return false;
-        // Filtrer par critÃ¨res points
+        // Filtrer par critères points
         if (t.minPoints != null && user.pointsFree < t.minPoints) return false;
         if (t.maxPoints != null && user.pointsFree > t.maxPoints) return false;
-        // Filtrer par type autorisÃ©
+        // Filtrer par type autorisé
         return true;
       })
       .map((t) => ({

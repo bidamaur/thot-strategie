@@ -13,6 +13,7 @@ import {
   TournamentWalletTransactionType,
 } from "@/generated/prisma-client";
 import { prisma } from "@/lib/prisma";
+import { getSettings } from "@/lib/settings/service";
 
 export class TournamentEconomyError extends Error {
   constructor(
@@ -60,17 +61,22 @@ export interface CreateTournamentInput {
   betMode: "FIXED" | "VARIABLE";
   rebuyEnabled: boolean;
   invitedUserIds?: string[];
+  visibility?: "PUBLIC" | "PRIVATE" | "CLUB";
+  clubId?: string | null;
+  description?: string | null;
 }
 
 function assertCapacity(maxPlayers: number): void {
+  // Le tableau à élimination directe exige une puissance de 2 ; les bornes
+  // fines (min/max, privilèges Premium) sont vérifiées par TournamentEligibilityEngine.
   if (
     !Number.isInteger(maxPlayers) ||
-    maxPlayers < 4 ||
-    maxPlayers > 64 ||
+    maxPlayers < 2 ||
+    maxPlayers > 1024 ||
     (maxPlayers & (maxPlayers - 1)) !== 0
   ) {
     throw new TournamentEconomyError(
-      "Le nombre de joueurs doit être 4, 8, 16, 32 ou 64.",
+      "Le nombre de joueurs doit être une puissance de 2 (4, 8, 16, 32, 64…).",
       "INVALID_INPUT",
     );
   }
@@ -162,12 +168,8 @@ export async function createTournament(input: CreateTournamentInput) {
         if (!creator) {
           throw new TournamentEconomyError("Créateur introuvable.", "NOT_FOUND");
         }
-        if (!creator.isPremium && !creator.isAdmin) {
-          throw new TournamentEconomyError(
-            "Seuls les membres Premium et les administrateurs peuvent créer un tournoi.",
-            "PREMIUM_REQUIRED",
-          );
-        }
+        // Les droits de création (Premium, Survival ouvert à tous, formats,
+        // portée, limites) sont vérifiés en amont par TournamentEligibilityEngine.
 
         if (input.invitedUserIds) {
           const invitees = await transaction.user.findMany({
@@ -213,6 +215,9 @@ export async function createTournament(input: CreateTournamentInput) {
             betMode: input.betMode,
             survivalBankEnabled,
             rebuyEnabled: input.rebuyEnabled,
+            visibility: input.visibility ?? "PUBLIC",
+            clubId: input.clubId ?? null,
+            description: input.description ?? null,
             status: TournamentStatus.OPEN,
           },
         });
@@ -297,6 +302,9 @@ async function registerTournamentPlayerInTransaction(
       minPoints: true,
       maxPoints: true,
       survivalBankEnabled: true,
+      visibility: true,
+      clubId: true,
+      creatorId: true,
       participants: { select: { userId: true, seed: true } },
     },
   });
@@ -320,6 +328,24 @@ async function registerTournamentPlayerInTransaction(
       "Le tournoi a atteint sa capacité maximale.",
       "FULL",
     );
+  }
+  if (tournament.visibility === "PRIVATE" && tournament.creatorId !== userId) {
+    const invitation = await transaction.tournamentInvitation.findUnique({
+      where: { tournamentId_userId: { tournamentId, userId } },
+      select: { status: true },
+    });
+    if (!invitation || invitation.status === TournamentInvitationStatus.DECLINED) {
+      throw new TournamentEconomyError("Ce tournoi privé est réservé aux invités.", "NOT_ELIGIBLE");
+    }
+  }
+  if (tournament.visibility === "CLUB" && tournament.clubId) {
+    const member = await transaction.clubMember.findUnique({
+      where: { clubId_userId: { clubId: tournament.clubId, userId } },
+      select: { id: true },
+    });
+    if (!member) {
+      throw new TournamentEconomyError("Ce tournoi est réservé aux membres du club.", "NOT_ELIGIBLE");
+    }
   }
 
   const user = await transaction.user.findUnique({
@@ -434,15 +460,41 @@ async function registerTournamentPlayerInTransaction(
   const joinedCount = seed;
   if (joinedCount === tournament.maxPlayers) {
     const gross = tournament.entryFee.mul(tournament.maxPlayers);
+    const rules = await getSettings([
+      "platform_fee_percentage",
+      "tournaments.freezeRulesOnStart",
+      "survival_bank_rebuy_cost",
+      "survival_bank_min_bet",
+      "survival_bank_max_bet",
+      "points.classic.winBase",
+      "points.classic.pieceBonusCap",
+    ] as const);
+    const feePercent = rules["platform_fee_percentage"];
     const platformFee = tournament.isPaid
-      ? gross.mul("0.10").toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+      ? gross.mul(new Prisma.Decimal(feePercent)).div(100).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
       : new Prisma.Decimal(0);
     await transaction.tournament.update({
       where: { id: tournament.id },
       data: {
         status: TournamentStatus.IN_PROGRESS,
+        startedAt: new Date(),
         totalPrizePool: gross.minus(platformFee),
         platformFee,
+        // Règles figées : toute modification ultérieure des paramètres
+        // n'affecte pas un tournoi déjà lancé.
+        ...(rules["tournaments.freezeRulesOnStart"]
+          ? {
+              configSnapshot: {
+                frozenAt: new Date().toISOString(),
+                platformFeePercent: feePercent,
+                survivalRebuyCost: rules["survival_bank_rebuy_cost"],
+                survivalMinBet: rules["survival_bank_min_bet"],
+                survivalMaxBet: rules["survival_bank_max_bet"],
+                pointsWinBase: rules["points.classic.winBase"],
+                pointsPieceBonusCap: rules["points.classic.pieceBonusCap"],
+              },
+            }
+          : {}),
       },
     });
     await createOpeningRound(transaction, tournament.id, [

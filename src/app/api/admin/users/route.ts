@@ -40,6 +40,8 @@ export async function GET(request: Request) {
         premiumLevel: true,
         pointsFree: true,
         walletReal: true,
+        walletLocked: true,
+        moneyVerified: true,
         elo: true,
         country: true,
         city: true,
@@ -65,6 +67,7 @@ export async function GET(request: Request) {
     users: users.map((u) => ({
       ...u,
       walletReal: u.walletReal.toString(),
+      walletLocked: u.walletLocked.toString(),
       totalTournaments: u._count.tournamentParticipations,
       totalMatches: u._count.whiteMatches + u._count.wonMatches,
     })),

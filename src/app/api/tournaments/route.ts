@@ -24,10 +24,36 @@ export async function GET(request: Request) {
     const currentUser = await getRequestUser(request);
     let tournaments;
     try {
+      // Visibilité : public pour tous ; privé pour le créateur, les invités et
+      // les inscrits ; club pour ses membres.
+      const memberClubIds = currentUser
+        ? (
+            await prisma.clubMember.findMany({
+              where: { userId: currentUser.id },
+              select: { clubId: true },
+            })
+          ).map((m) => m.clubId)
+        : [];
       tournaments = await prisma.tournament.findMany({
+        where: currentUser?.isAdmin
+          ? undefined
+          : {
+              OR: [
+                { visibility: "PUBLIC" },
+                ...(currentUser
+                  ? [
+                      { creatorId: currentUser.id },
+                      { invitations: { some: { userId: currentUser.id } } },
+                      { participants: { some: { userId: currentUser.id } } },
+                      { visibility: "CLUB" as const, clubId: { in: memberClubIds } },
+                    ]
+                  : []),
+              ],
+            },
         orderBy: { createdAt: "desc" },
         take: 100,
         include: {
+          club: { select: { id: true, name: true, slug: true } },
           creator: { select: { id: true, username: true } },
           _count: { select: { participants: true } },
           invitations: currentUser
@@ -88,15 +114,21 @@ export async function GET(request: Request) {
     return NextResponse.json({
       tournaments: tournaments.map((tournament) => {
         const hasDetails = "name" in tournament;
+        const details = tournament as typeof tournament & {
+          city?: string | null;
+          region?: string | null;
+          country?: string | null;
+          continent?: string | null;
+        };
         return {
           ...tournament,
           name: hasDetails
             ? tournament.name
             : `Tournoi de ${tournament.creator.username}`,
-          city: hasDetails ? tournament.city : null,
-          region: hasDetails ? tournament.region : null,
-          country: hasDetails ? tournament.country : null,
-          continent: hasDetails ? tournament.continent : null,
+          city: hasDetails ? details.city ?? null : null,
+          region: hasDetails ? details.region ?? null : null,
+          country: hasDetails ? details.country ?? null : null,
+          continent: hasDetails ? details.continent ?? null : null,
           type: "type" in tournament ? tournament.type : "ELIMINATION",
           gameType: "gameType" in tournament ? tournament.gameType : "CHECKERS",
           draughtsVariant:
@@ -133,7 +165,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!isMockEconomyEnabled()) return mockEconomyDisabledResponse();
   const currentUser = await getRequestUser(request);
   if (!currentUser) {
     return NextResponse.json(
@@ -183,7 +214,18 @@ export async function POST(request: Request) {
     region,
     country,
     continent,
+    visibility,
+    clubId,
+    description,
   } = fields;
+  const resolvedVisibility =
+    visibility === "PRIVATE" || visibility === "CLUB" ? visibility : "PUBLIC";
+  const resolvedClubId = typeof clubId === "string" && clubId ? clubId : null;
+  const resolvedDescription =
+    typeof description === "string" && description.trim() ? description.trim().slice(0, 1000) : null;
+  // Les tournois payants passent par un paiement simulé tant qu'aucun
+  // prestataire de paiement réel n'est branché.
+  if (isPaid === true && !isMockEconomyEnabled()) return mockEconomyDisabledResponse();
 
   const resolvedName =
     typeof name === "string" && name.trim()
@@ -306,6 +348,8 @@ export async function POST(request: Request) {
       survivalBankEnabled: tournamentType === "SURVIVAL_BANK",
       rebuyEnabled: typeof rebuyEnabled === "boolean" ? rebuyEnabled : false,
       invitedUserIds: inviteUserIds as string[] | undefined,
+      visibility: resolvedVisibility,
+      clubId: resolvedClubId,
     });
 
     const tournament = await createTournament({
@@ -334,6 +378,9 @@ export async function POST(request: Request) {
       betMode: resolvedBetMode as "FIXED" | "VARIABLE",
       rebuyEnabled: typeof rebuyEnabled === "boolean" ? rebuyEnabled : false,
       invitedUserIds: inviteUserIds as string[] | undefined,
+      visibility: resolvedVisibility,
+      clubId: resolvedClubId,
+      description: resolvedDescription,
     });
 
     return NextResponse.json(
@@ -364,7 +411,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status });
     }
     if (error instanceof Error && error.name === "TournamentEligibilityError") {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+      const code = (error as Error & { code?: string }).code;
+      return NextResponse.json(
+        { error: error.message, code },
+        { status: code === "PREMIUM_REQUIRED" ? 403 : 400 },
+      );
     }
     console.error("Erreur lors de la création du tournoi :", error);
     return NextResponse.json(

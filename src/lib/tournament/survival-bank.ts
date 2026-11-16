@@ -1,4 +1,6 @@
 import {
+  BalanceTransactionType,
+  BalanceType,
   BetStatus,
   Prisma,
   TournamentBet,
@@ -629,57 +631,98 @@ export class SurvivalBankEngine {
       throw new SurvivalBankError("Le rebuy n'est pas autorisé dans ce tournoi.", "REBUY_NOT_ALLOWED");
     }
 
-    const rebuyCost = await TournamentConfigService.getRebuyCostDefault();
-    if (pointsSource === "NORMAL_POINTS") {
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
-        select: { pointsFree: true },
+    // Règles figées au démarrage : le coût de réintégration ne change pas en cours de tournoi.
+    const frozen = await prisma.tournament.findUnique({
+      where: { id: tournamentId },
+      select: { configSnapshot: true },
+    });
+    const snapshot = frozen?.configSnapshot as { survivalRebuyCost?: number } | null;
+    const rebuyCost =
+      typeof snapshot?.survivalRebuyCost === "number"
+        ? snapshot.survivalRebuyCost
+        : await TournamentConfigService.getRebuyCostDefault();
+    return prisma.$transaction(async (transaction) => {
+      if (pointsSource === "NORMAL_POINTS") {
+        const debit = await transaction.user.updateMany({
+          where: {
+            id: userId,
+            pointsFree: { gte: rebuyCost },
+          },
+          data: { pointsFree: { decrement: rebuyCost } },
+        });
+        if (debit.count !== 1) {
+          throw new SurvivalBankError(
+            "Points normaux insuffisants pour le rebuy.",
+            "INSUFFICIENT_CAPITAL",
+          );
+        }
+      }
+
+      const newCapital = wallet.initialCapital;
+      const walletUpdate = await transaction.tournamentWallet.updateMany({
+        where: {
+          id: wallet.id,
+          status: TournamentParticipantStatus.ELIMINATED,
+        },
+        data: {
+          capital: newCapital,
+          status: TournamentParticipantStatus.ACTIVE,
+          eliminatedAt: null,
+          eliminationReason: null,
+        },
       });
-      if (!user || user.pointsFree < rebuyCost) {
+      if (walletUpdate.count !== 1) {
         throw new SurvivalBankError(
-          "Points normaux insuffisants pour le rebuy.",
-          "INSUFFICIENT_CAPITAL",
+          "Le joueur n'est pas éliminé, rebuy non nécessaire.",
+          "INVALID_INPUT",
         );
       }
-      await prisma.user.update({
-        where: { id: userId },
-        data: { pointsFree: { decrement: rebuyCost } },
+      const updatedWallet = await transaction.tournamentWallet.findUniqueOrThrow({
+        where: { id: wallet.id },
       });
-    }
 
-    const newCapital = wallet.initialCapital; // Rebuy remet le capital initial
-    const updatedWallet = await prisma.tournamentWallet.update({
-      where: { id: wallet.id },
-      data: {
-        capital: newCapital,
-        status: TournamentParticipantStatus.ACTIVE,
-        eliminatedAt: null,
-        eliminationReason: null,
-      },
+      const participantUpdate = await transaction.tournamentParticipant.updateMany({
+        where: { tournamentId, userId },
+        data: {
+          status: TournamentParticipantStatus.ACTIVE,
+          eliminatedAt: null,
+        },
+      });
+      if (participantUpdate.count !== 1) {
+        throw new SurvivalBankError(
+          "Inscription du joueur au tournoi introuvable.",
+          "NOT_FOUND",
+        );
+      }
+
+      const walletTransaction =
+        await transaction.tournamentWalletTransaction.create({
+          data: {
+            walletId: wallet.id,
+            tournamentId,
+            userId,
+            type: TournamentWalletTransactionType.DEPOSIT,
+            amount: newCapital,
+            balanceAfter: newCapital,
+            referenceId: `rebuy:${tournamentId}`,
+            description: `Rebuy après élimination - tournoi ${tournamentId}`,
+          },
+        });
+      if (pointsSource === "NORMAL_POINTS") {
+        await transaction.balanceTransaction.create({
+          data: {
+            userId,
+            balanceType: BalanceType.FREE_POINTS,
+            transactionType: BalanceTransactionType.TOURNAMENT_POINTS_REBUY,
+            amount: new Prisma.Decimal(-rebuyCost),
+            referenceId: walletTransaction.id,
+            description: `Coût du rebuy pour le tournoi ${tournamentId}`,
+          },
+        });
+      }
+
+      return updatedWallet;
     });
-
-    await prisma.tournamentParticipant.updateMany({
-      where: { tournamentId, userId },
-      data: {
-        status: TournamentParticipantStatus.ACTIVE,
-        eliminatedAt: null,
-      },
-    });
-
-    await prisma.tournamentWalletTransaction.create({
-      data: {
-        walletId: wallet.id,
-        tournamentId,
-        userId,
-        type: TournamentWalletTransactionType.DEPOSIT,
-        amount: newCapital,
-        balanceAfter: newCapital,
-        referenceId: `rebuy:${tournamentId}`,
-        description: `Rebuy après élimination - tournoi ${tournamentId}`,
-      },
-    });
-
-    return updatedWallet;
   }
 
   /**

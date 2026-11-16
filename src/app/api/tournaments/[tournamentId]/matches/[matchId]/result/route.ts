@@ -59,6 +59,19 @@ export async function POST(request: Request, { params }: RouteContext) {
       );
     }
 
+    // Un joueur ne peut jamais se déclarer lui-même vainqueur : il peut
+    // uniquement reconnaître la victoire de son adversaire. Tout autre
+    // arbitrage relève d'un administrateur.
+    if (!currentUser.isAdmin && body.winnerId === currentUser.id) {
+      return NextResponse.json(
+        { error: "Vous ne pouvez déclarer que la victoire de votre adversaire. Contactez un arbitre en cas de litige." },
+        { status: 403 },
+      );
+    }
+    if (body.winnerId !== match.playerWhiteId && body.winnerId !== match.playerBlackId) {
+      return NextResponse.json({ error: "Le vainqueur doit être un joueur du match." }, { status: 400 });
+    }
+
     await recordValidatedTournamentResult(matchId, body.winnerId);
     const updatedMatch = await prisma.tournamentMatch.findUniqueOrThrow({
       where: { id: matchId },

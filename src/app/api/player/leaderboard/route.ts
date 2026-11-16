@@ -1,5 +1,7 @@
 import { getRequestUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
+import { loadRatingSettings } from "@/lib/rating/load-config";
+import { isProvisional, levelFor } from "@/lib/rating/pools";
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request): Promise<NextResponse> {
@@ -8,14 +10,19 @@ export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const variant = searchParams.get("variant") ?? "CHESS";
   const timeControl = searchParams.get("timeControl") || undefined;
-  const limit = Math.min(parseInt(searchParams.get("limit") ?? "50", 10), 100);
-  const offset = parseInt(searchParams.get("offset") ?? "0", 10);
+  const limit = Math.max(1, Math.min(parseInt(searchParams.get("limit") ?? "50", 10) || 50, 100));
+  const offset = Math.max(0, parseInt(searchParams.get("offset") ?? "0", 10) || 0);
+  // Par défaut, seuls les classements confirmés apparaissent (pratique Lichess).
+  const includeProvisional = searchParams.get("provisional") === "1";
+  const { config, levels } = await loadRatingSettings();
+  const minGames = includeProvisional ? 0 : config.provisionalGames;
 
   try {
     const [ratings, totalCount, userPosition] = await Promise.all([
       prisma.playerRating.findMany({
         where: {
           variant,
+          gamesPlayed: { gte: minGames },
           ...(timeControl ? { timeControl } : {}),
         },
         include: {
@@ -36,6 +43,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       prisma.playerRating.count({
         where: {
           variant,
+          gamesPlayed: { gte: minGames },
           ...(timeControl ? { timeControl } : {}),
         },
       }),
@@ -68,6 +76,8 @@ export async function GET(request: Request): Promise<NextResponse> {
           wins: r.wins,
           losses: r.losses,
           draws: r.draws,
+          provisional: isProvisional(r.gamesPlayed, config.provisionalGames),
+          level: levelFor(r.eloRating, levels),
         },
       })),
       totalCount,
@@ -77,6 +87,8 @@ export async function GET(request: Request): Promise<NextResponse> {
             timeControl: userPosition.timeControl,
             eloRating: userPosition.eloRating,
             gamesPlayed: userPosition.gamesPlayed,
+            provisional: isProvisional(userPosition.gamesPlayed, config.provisionalGames),
+            level: levelFor(userPosition.eloRating, levels),
           }
         : null,
     });

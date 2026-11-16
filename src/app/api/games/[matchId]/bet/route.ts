@@ -1,15 +1,34 @@
-import { BetStatus, Prisma } from "@/generated/prisma-client";
+import { Prisma } from "@/generated/prisma-client";
 import { getRequestUser } from "@/lib/auth/session";
+import { escrowGameBet, InsufficientBetBalanceError } from "@/lib/economy/game-bets";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
 const MAX_BET_AMOUNT = 1000;
 const MIN_BET_AMOUNT = 1;
 
+async function assertBettingOpen(
+  transaction: Prisma.TransactionClient,
+  matchId: string,
+): Promise<void> {
+  const match = await transaction.match.findUnique({
+    where: { id: matchId },
+    select: { status: true, movesHistory: true },
+  });
+  if (
+    match?.status !== "IN_PROGRESS" ||
+    !Array.isArray(match.movesHistory) ||
+    match.movesHistory.length > 0
+  ) {
+    throw new Error("BET_NOT_OPEN");
+  }
+}
+
 export async function POST(
   request: Request,
-  { params }: { params: { matchId: string } },
+  { params }: { params: Promise<{ matchId: string }> },
 ): Promise<NextResponse> {
+  const { matchId } = await params;
   const currentUser = await getRequestUser(request);
   if (!currentUser) {
     return NextResponse.json({ error: "Connexion requise." }, { status: 401 });
@@ -39,7 +58,7 @@ export async function POST(
 
   try {
     const match = await prisma.match.findUnique({
-      where: { id: params.matchId },
+      where: { id: matchId },
       include: {
         playerWhite: { select: { id: true, pointsFree: true } },
         playerBlack: { select: { id: true, pointsFree: true } },
@@ -51,6 +70,15 @@ export async function POST(
       return NextResponse.json(
         { error: "Partie introuvable." },
         { status: 404 },
+      );
+    }
+
+    // Séparation des portefeuilles : une partie rémunérée a déjà sa mise en
+    // points argent ; aucun défi en points classiques ne peut s'y ajouter.
+    if (match.mode === "MONEY") {
+      return NextResponse.json(
+        { error: "Les défis en points classiques sont indisponibles en partie rémunérée." },
+        { status: 409 },
       );
     }
 
@@ -70,18 +98,27 @@ export async function POST(
       );
     }
 
-    if (match.status !== "WAITING" && match.status !== "IN_PROGRESS") {
+    if (match.status !== "IN_PROGRESS") {
       return NextResponse.json(
-        { error: "La partie ne peut plus recevoir de mise." },
+        { error: "La partie ne peut plus recevoir d'action de mise." },
         { status: 400 },
       );
     }
 
-      const opponentId = isPlayerWhite ? match.playerBlackId! : match.playerWhiteId;
-    const opponent = isPlayerWhite ? match.playerBlack : match.playerWhite;
+    const opponentId = isPlayerWhite ? match.playerBlackId! : match.playerWhiteId;
 
     // --- PROPOSE ---
     if (action === "propose") {
+      if (
+        !Array.isArray(match.movesHistory) ||
+        match.movesHistory.length > 0
+      ) {
+        return NextResponse.json(
+          { error: "La mise ne peut être proposée qu'avant le premier coup." },
+          { status: 400 },
+        );
+      }
+
       if (
         typeof amount !== "number" ||
         !Number.isInteger(amount) ||
@@ -102,26 +139,55 @@ export async function POST(
         );
       }
 
-      // Annuler toute mise précédente sur cette partie
-      if (match.gameBet) {
-        await prisma.gameBet.update({
-          where: { id: match.gameBet.id },
-          data: { status: "EXPIRED" },
-        });
+      if (
+        match.gameBet &&
+        match.gameBet.status !== "REJECTED" &&
+        match.gameBet.status !== "EXPIRED"
+      ) {
+        return NextResponse.json(
+          { error: "Une mise est déjà en cours ou réglée sur cette partie." },
+          { status: 409 },
+        );
       }
 
-      const bet = await prisma.gameBet.create({
-        data: {
-          matchId: params.matchId,
-          proposerId: currentUser.id,
-          opponentId,
-          amount,
-          status: "PROPOSED",
-        },
-        include: {
-          proposer: { select: { id: true, username: true } },
-          opponent: { select: { id: true, username: true } },
-        },
+      const bet = await prisma.$transaction(async (transaction) => {
+        await assertBettingOpen(transaction, matchId);
+        const updatedBet = await transaction.gameBet.upsert({
+          where: { matchId },
+          create: {
+            matchId,
+            proposerId: currentUser.id,
+            opponentId,
+            amount,
+            status: "PROPOSED",
+          },
+          update: {
+            proposerId: currentUser.id,
+            opponentId,
+            amount,
+            status: "PROPOSED",
+            acceptedAt: null,
+            settledAt: null,
+            counterProposal: null,
+            counterProposedBy: null,
+          },
+          include: {
+            proposer: { select: { id: true, username: true } },
+            opponent: { select: { id: true, username: true } },
+          },
+        });
+        await transaction.match.update({
+          where: { id: matchId },
+          data: {
+            betEnabled: true,
+            betAmount: amount,
+            betStatus: "PROPOSED",
+            betProposedById: currentUser.id,
+            betAcceptedAt: null,
+            betSettledAt: null,
+          },
+        });
+        return updatedBet;
       });
 
       return NextResponse.json({ bet });
@@ -136,14 +202,24 @@ export async function POST(
       );
     }
 
-    if (bet.status !== "PROPOSED") {
+    if (bet.status !== "PROPOSED" && bet.status !== "COUNTERED") {
       return NextResponse.json(
         { error: "Cette mise n'est plus en attente." },
         { status: 400 },
       );
     }
 
-    if (currentUser.id !== bet.opponentId && action !== "counter") {
+    const pendingProposerId =
+      bet.status === "COUNTERED"
+        ? bet.counterProposedBy ?? bet.proposerId
+        : bet.proposerId;
+    if (
+      currentUser.id === pendingProposerId ||
+      (action !== "counter" &&
+        currentUser.id !== (pendingProposerId === bet.proposerId
+          ? bet.opponentId
+          : bet.proposerId))
+    ) {
       return NextResponse.json(
         { error: "Seul l'adversaire peut accepter ou refuser cette mise." },
         { status: 403 },
@@ -151,75 +227,71 @@ export async function POST(
     }
 
     if (action === "accept") {
-      const opponentBalance = isPlayerWhite ? match.playerBlack.pointsFree : match.playerWhite.pointsFree;
-      if (opponentBalance < bet.amount) {
-        return NextResponse.json(
-          { error: "Solde insuffisant de l'adversaire pour accepter la mise." },
-          { status: 400 },
-        );
-      }
-
-      const updatedBet = await prisma.gameBet.update({
-        where: { id: bet.id },
-        data: {
-          status: "ACCEPTED",
-          acceptedAt: new Date(),
-        },
+      const acceptedAmount =
+        bet.status === "COUNTERED"
+          ? bet.counterProposal ?? bet.amount
+          : bet.amount;
+      const updatedBet = await prisma.$transaction(async (transaction) => {
+        await assertBettingOpen(transaction, matchId);
+        const claimed = await transaction.gameBet.updateMany({
+          where: { id: bet.id, status: bet.status },
+          data: {
+            amount: acceptedAmount,
+            status: "ACCEPTED",
+            acceptedAt: new Date(),
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new Error("BET_NOT_PENDING");
+        }
+        await escrowGameBet(transaction, {
+          betId: bet.id,
+          matchId,
+          playerIds: [match.playerWhiteId, match.playerBlackId!],
+          amount: acceptedAmount,
+        });
+        await transaction.match.update({
+          where: { id: matchId },
+          data: {
+            betEnabled: true,
+            betAmount: acceptedAmount,
+            betStatus: "ACCEPTED",
+            betProposedById: pendingProposerId,
+            betAcceptedAt: new Date(),
+          },
+        });
+        return transaction.gameBet.findUniqueOrThrow({
+          where: { id: bet.id },
+          include: {
+            proposer: { select: { id: true, username: true } },
+            opponent: { select: { id: true, username: true } },
+          },
+        });
       });
-
-      // Bloquer les points (escrow) - débit temporaire des deux joueurs
-      await prisma.user.update({
-        where: { id: bet.proposerId },
-        data: { pointsFree: { decrement: bet.amount } },
-      });
-      await prisma.user.update({
-        where: { id: bet.opponentId },
-        data: { pointsFree: { decrement: bet.amount } },
-      });
-
-      await prisma.balanceTransaction.create({
-        data: {
-          userId: bet.proposerId,
-          balanceType: "FREE_POINTS",
-          transactionType: "BET_PLACED",
-          amount: new Prisma.Decimal(bet.amount),
-          referenceId: bet.id,
-          description: `Mise placée sur la partie ${params.matchId}`,
-        },
-      });
-      await prisma.balanceTransaction.create({
-        data: {
-          userId: bet.opponentId,
-          balanceType: "FREE_POINTS",
-          transactionType: "BET_PLACED",
-          amount: new Prisma.Decimal(bet.amount),
-          referenceId: bet.id,
-          description: `Mise acceptée sur la partie ${params.matchId}`,
-        },
-      });
-
-      await prisma.match.update({
-        where: { id: params.matchId },
-        data: {
-          betEnabled: true,
-          betAmount: bet.amount,
-          betStatus: "ACCEPTED",
-          betAcceptedAt: new Date(),
-        },
-      });
-
       return NextResponse.json({ bet: updatedBet });
     }
 
     if (action === "reject") {
-      const updatedBet = await prisma.gameBet.update({
-        where: { id: bet.id },
-        data: { status: "REJECTED" },
-      });
-
-      await prisma.match.update({
-        where: { id: params.matchId },
-        data: { betStatus: "REJECTED" },
+      const updatedBet = await prisma.$transaction(async (transaction) => {
+        const rejected = await transaction.gameBet.updateMany({
+          where: { id: bet.id, status: bet.status },
+          data: { status: "REJECTED" },
+        });
+        if (rejected.count !== 1) {
+          throw new Error("BET_NOT_PENDING");
+        }
+        await transaction.match.update({
+          where: { id: matchId },
+          data: {
+            betEnabled: false,
+            betAmount: 0,
+            betStatus: "REJECTED",
+            betProposedById: null,
+          },
+        });
+        return transaction.gameBet.findUniqueOrThrow({
+          where: { id: bet.id },
+        });
       });
 
       return NextResponse.json({ bet: updatedBet });
@@ -246,13 +318,31 @@ export async function POST(
         );
       }
 
-      const updatedBet = await prisma.gameBet.update({
-        where: { id: bet.id },
-        data: {
-          status: "COUNTERED",
-          counterProposal: amount,
-          counterProposedBy: currentUser.id,
-        },
+      const updatedBet = await prisma.$transaction(async (transaction) => {
+        await assertBettingOpen(transaction, matchId);
+        const countered = await transaction.gameBet.updateMany({
+          where: { id: bet.id, status: bet.status },
+          data: {
+            status: "COUNTERED",
+            counterProposal: amount,
+            counterProposedBy: currentUser.id,
+          },
+        });
+        if (countered.count !== 1) {
+          throw new Error("BET_NOT_PENDING");
+        }
+        await transaction.match.update({
+          where: { id: matchId },
+          data: {
+            betEnabled: true,
+            betAmount: amount,
+            betStatus: "COUNTERED",
+            betProposedById: currentUser.id,
+          },
+        });
+        return transaction.gameBet.findUniqueOrThrow({
+          where: { id: bet.id },
+        });
       });
 
       return NextResponse.json({ bet: updatedBet });
@@ -263,6 +353,24 @@ export async function POST(
       { status: 400 },
     );
   } catch (error) {
+    if (error instanceof InsufficientBetBalanceError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 400 },
+      );
+    }
+    if (error instanceof Error && error.message === "BET_NOT_PENDING") {
+      return NextResponse.json(
+        { error: "Cette mise n'est plus en attente." },
+        { status: 409 },
+      );
+    }
+    if (error instanceof Error && error.message === "BET_NOT_OPEN") {
+      return NextResponse.json(
+        { error: "La mise ne peut être modifiée qu'avant le premier coup." },
+        { status: 409 },
+      );
+    }
     console.error("Erreur lors de la gestion de la mise :", error);
     return NextResponse.json(
       { error: "Impossible de traiter la mise." },

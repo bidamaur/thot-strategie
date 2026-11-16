@@ -18,7 +18,17 @@ export async function GET(request: Request): Promise<NextResponse> {
           userId: currentUser.id,
           balanceType: "FREE_POINTS",
           transactionType: {
-            in: ["GAME_POINTS_WON", "GAME_POINTS_LOST", "BET_PLACED", "BET_WON", "BET_LOST", "BET_REFUNDED"],
+            in: [
+              "GAME_POINTS_WON",
+              "GAME_POINTS_LOST",
+              "BET_PLACED",
+              "BET_WON",
+              "BET_LOST",
+              "BET_REFUNDED",
+              "TOURNAMENT_POINTS_ENTRY",
+              "TOURNAMENT_POINTS_PRIZE",
+              "TOURNAMENT_POINTS_REBUY",
+            ],
           },
         },
         orderBy: { createdAt: "desc" },

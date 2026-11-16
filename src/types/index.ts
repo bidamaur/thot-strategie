@@ -2,6 +2,13 @@ export type GameType = "CHESS" | "CHECKERS";
 
 export type MatchmakingStrategy = "RANDOM" | "TARGETED";
 
+/**
+ * CASUAL : partie amicale (points classiques, pas d'ELO)
+ * RATED  : partie classée (ELO du pool jeu × variante × cadence)
+ * MONEY  : partie rémunérée (points argent, consentement explicite des deux joueurs)
+ */
+export type GameMode = "CASUAL" | "RATED" | "MONEY";
+
 export interface MatchmakingCriteria {
   minPoints?: number;
   maxPoints?: number;
@@ -12,6 +19,11 @@ export interface MatchmakingCriteria {
 
 export interface JoinQueuePayload {
   gameType: GameType;
+  /** Mode explicite. Absent : déduit de `rated` (compatibilité). */
+  mode?: GameMode;
+  /** Mise en FCFA, obligatoire en mode MONEY. */
+  stake?: number | null;
+  draughtsVariant?: "ENGLISH" | "INTERNATIONAL";
   isPaid?: boolean;
   rated?: boolean;
   betAmount?: number | null;
@@ -23,6 +35,7 @@ export interface JoinQueuePayload {
 export interface ClientToServerEvents {
   join_queue: (payload: JoinQueuePayload) => void;
   leave_queue: () => void;
+  cut_match: (payload: { matchId: string }) => void;
   join_match: (payload: { matchId: string }) => void;
   make_move: (payload: { matchId: string; move: unknown }) => void;
   offer_draw: (payload: { matchId: string }) => void;
@@ -61,12 +74,22 @@ export interface ServerToClientEvents {
   queue_joined: (payload: {
     gameType: GameType;
     strategy: MatchmakingStrategy;
+    mode?: GameMode;
+    stake?: number | null;
   }) => void;
+  queue_stats: (payload: { waiting: Record<string, number> }) => void;
   queue_left: () => void;
   match_found: (payload: {
     matchId: string;
     gameType: GameType;
     opponentId: string;
+    mode?: GameMode;
+  }) => void;
+  active_match_conflict: (payload: {
+    matchId: string;
+    opponentUsername: string;
+    disconnectedPlayerId: string | null;
+    gracePeriodMs: number;
   }) => void;
   match_state: (payload: {
     matchId: string;
@@ -77,18 +100,30 @@ export interface ServerToClientEvents {
     opponentAvatar: string | null;
     draughtsVariant: "ENGLISH" | "INTERNATIONAL" | null;
     moves: OnlinePly[];
-    status: "IN_PROGRESS" | "FINISHED" | "ABANDONED";
+    status: "IN_PROGRESS" | "FINISHED" | "ABANDONED" | "ABORTED";
     winnerId: string | null;
     scoreDelta: number | null;
+    pointsChange?: number | null;
+    opponentPointsChange?: number | null;
     drawOfferById: string | null;
     whiteTimeMs: number | null;
     blackTimeMs: number | null;
     pointsBalance: number | null;
     opponentPointsBalance: number | null;
+    eloChange?: number | null;
+    opponentEloChange?: number | null;
+    eloBalance?: number | null;
+    opponentEloBalance?: number | null;
     betEnabled: boolean;
     betAmount: number | null;
     betStatus: string | null;
     betProposedById: string | null;
+    mode?: GameMode;
+    stakeAmount?: number | null;
+    timeControlMinutes?: number | null;
+    rating?: number | null;
+    opponentRating?: number | null;
+    chatEnabled?: boolean;
   }) => void;
   move_accepted: (payload: {
     matchId: string;
@@ -114,10 +149,16 @@ export interface ServerToClientEvents {
     pointsBalance: number;
     opponentPointsChange: number;
     opponentPointsBalance: number;
-    status: "FINISHED" | "ABANDONED";
-    reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT";
-    whiteEloChange: number;
-    blackEloChange: number;
+    status: "FINISHED" | "ABANDONED" | "ABORTED";
+    reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT" | "ABORTED";
+    mode?: GameMode;
+    moneyChange?: number;
+    moneyStake?: number | null;
+    moneyCommission?: number;
+    eloChange: number;
+    opponentEloChange: number;
+    eloBalance: number;
+    opponentEloBalance: number;
     betSettled: boolean;
     betAmount: number | null;
     whiteResult: "WIN" | "LOSS" | "DRAW" | null;

@@ -7,6 +7,8 @@ import {
   TournamentEconomyError,
 } from "@/lib/economy/tournaments";
 import { getRequestUser } from "@/lib/auth/session";
+import { prisma } from "@/lib/prisma";
+import { getSetting } from "@/lib/settings/service";
 import { NextResponse } from "next/server";
 
 interface RouteContext {
@@ -14,8 +16,24 @@ interface RouteContext {
 }
 
 export async function POST(request: Request, { params }: RouteContext) {
-  if (!isMockEconomyEnabled()) return mockEconomyDisabledResponse();
   const { tournamentId } = await params;
+  const target = await prisma.tournament.findUnique({
+    where: { id: tournamentId },
+    select: { isPaid: true },
+  });
+  if (!target) {
+    return NextResponse.json({ error: "Tournoi introuvable." }, { status: 404 });
+  }
+  // Seuls les tournois payants dépendent du paiement (simulé en développement).
+  if (target.isPaid) {
+    if (!isMockEconomyEnabled()) return mockEconomyDisabledResponse();
+    if (!(await getSetting("money.tournamentsEnabled"))) {
+      return NextResponse.json(
+        { error: "Les tournois payants sont momentanément fermés." },
+        { status: 403 },
+      );
+    }
+  }
   const currentUser = await getRequestUser(request);
   if (!currentUser) {
     return NextResponse.json({ error: "Connectez-vous pour vous inscrire." }, { status: 401 });

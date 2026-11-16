@@ -13,6 +13,10 @@ const profileSelect = {
   isPremium: true,
   pointsFree: true,
   walletReal: true,
+  walletLocked: true,
+  moneyVerified: true,
+  premiumLevel: true,
+  premiumExpiresAt: true,
   elo: true,
   draughtsVariant: true,
   country: true,
@@ -122,6 +126,10 @@ export function toPublicProfile(user: {
   isPremium: boolean;
   pointsFree: number;
   walletReal: { toString(): string };
+  walletLocked?: { toString(): string };
+  moneyVerified?: boolean;
+  premiumLevel?: number;
+  premiumExpiresAt?: Date | null;
   elo: number;
   draughtsVariant: string;
   country: string | null;
@@ -136,6 +144,10 @@ export function toPublicProfile(user: {
     isPremium: user.isPremium,
     pointsFree: user.pointsFree,
     walletReal: user.walletReal.toString(),
+    walletLocked: user.walletLocked?.toString() ?? "0",
+    moneyVerified: user.moneyVerified ?? false,
+    premiumLevel: user.premiumLevel ?? 0,
+    premiumExpiresAt: user.premiumExpiresAt?.toISOString() ?? null,
     elo: user.elo,
     draughtsVariant: user.draughtsVariant,
     country: user.country,
