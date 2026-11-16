@@ -10,7 +10,8 @@ interface SettingRow {
   label: string;
   description?: string;
   critical?: boolean;
-  type: "number" | "boolean" | "enum" | "json";
+  type: "number" | "boolean" | "enum" | "json" | "string";
+  placeholder?: string;
   default: unknown;
   min?: number;
   max?: number;
@@ -166,7 +167,15 @@ export function AdminSettingsPanel() {
                       <span className={`absolute top-0.5 size-5 rounded-full bg-ink transition-all ${row.value === true ? "left-[22px]" : "left-0.5"}`} />
                       <span className="sr-only">{row.label}</span>
                     </button>
-                  ) : row.type === "json" ? null : (
+                  ) : row.type === "json" ? null : row.type === "string" ? (
+                    <input
+                      type="text"
+                      value={draftOf(row)}
+                      placeholder={row.placeholder}
+                      onChange={(e) => setDrafts((d) => ({ ...d, [row.key]: e.target.value }))}
+                      className="field w-full font-mono md:w-72"
+                    />
+                  ) : (
                     <div className="flex shrink-0 items-center gap-2">
                       <input
                         type="number"

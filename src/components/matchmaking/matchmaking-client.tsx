@@ -1,5 +1,6 @@
 "use client";
 
+import { AdSlot } from "@/components/ads/ad-slot";
 import {
   ArrowLeft,
   CircleDot,
@@ -852,6 +853,9 @@ export function MatchmakingClient() {
           </section>
         </div>
       )}
+      <div className="mx-auto mt-8 w-full max-w-4xl">
+        <AdSlot placement="play" />
+      </div>
     </main>
   );
 }

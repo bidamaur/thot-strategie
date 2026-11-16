@@ -1,5 +1,6 @@
 "use client";
 
+import { AdSlot } from "@/components/ads/ad-slot";
 import {
   ArrowLeft,
   Check,
@@ -1039,6 +1040,9 @@ export function TournamentsClient() {
           </section>
         </div>
       )}
+      <div className="mx-auto mt-8 w-full max-w-5xl">
+        <AdSlot placement="tournaments" />
+      </div>
     </main>
   );
 }

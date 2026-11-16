@@ -20,7 +20,8 @@ export type SettingCategory =
   | "tournaments"
   | "survival"
   | "premium"
-  | "clubs";
+  | "clubs"
+  | "ads";
 
 export const SETTING_CATEGORIES: Record<
   SettingCategory,
@@ -62,6 +63,10 @@ export const SETTING_CATEGORIES: Record<
     label: "Clubs",
     description: "Création, capacités et permissions des clubs.",
   },
+  ads: {
+    label: "Publicité",
+    description: "Google AdSense : identifiants, emplacements actifs. Jamais affichée en salle de jeu.",
+  },
 };
 
 type BaseDef = {
@@ -77,6 +82,7 @@ export type SettingDef =
   | (BaseDef & { type: "number"; default: number; min?: number; max?: number; integer?: boolean; unit?: string })
   | (BaseDef & { type: "boolean"; default: boolean })
   | (BaseDef & { type: "enum"; default: string; options: { value: string; label: string }[] })
+  | (BaseDef & { type: "string"; default: string; maxLength: number; pattern?: string; placeholder?: string })
   | (BaseDef & { type: "json"; default: unknown });
 
 export interface PremiumPrivileges {
@@ -100,6 +106,8 @@ export interface PremiumPrivileges {
   clubChampionships: boolean;
   profileThemes: boolean;
   badge: boolean;
+  /** Navigation sans publicité. */
+  adFree?: boolean;
 }
 
 export interface PremiumTier {
@@ -160,6 +168,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: false,
       profileThemes: true,
       badge: true,
+      adFree: true,
     },
   },
   {
@@ -184,6 +193,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: true,
       profileThemes: true,
       badge: true,
+      adFree: true,
     },
   },
   {
@@ -211,6 +221,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: true,
       profileThemes: true,
       badge: true,
+      adFree: true,
     },
   },
   {
@@ -238,6 +249,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: true,
       profileThemes: true,
       badge: true,
+      adFree: true,
     },
   },
   {
@@ -265,6 +277,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: true,
       profileThemes: true,
       badge: true,
+      adFree: true,
     },
   },
 ];
@@ -279,6 +292,19 @@ export const DEFAULT_RATING_LEVELS = [
   { label: "Grand Maître Élite", minRating: 2000 },
   { label: "Légende", minRating: 2200 },
 ];
+
+/** Emplacements publicitaires disponibles (aucun en salle de jeu). */
+export const AD_PLACEMENTS = [
+  { id: "home", label: "Accueil" },
+  { id: "play", label: "Recherche de partie" },
+  { id: "tournaments", label: "Liste des tournois" },
+  { id: "tournament", label: "Page d'un tournoi" },
+  { id: "leaderboard", label: "Classements" },
+  { id: "clubs", label: "Clubs" },
+  { id: "wallet", label: "Portefeuille" },
+] as const;
+
+export type AdPlacement = (typeof AD_PLACEMENTS)[number]["id"];
 
 export const SETTING_DEFINITIONS = [
   // ── Points classiques ────────────────────────────────────────────────
@@ -368,6 +394,13 @@ export const SETTING_DEFINITIONS = [
   { key: "premium.tiers", category: "premium", type: "json", default: DEFAULT_PREMIUM_TIERS, critical: true, label: "Niveaux, tarifs et privilèges", description: "Tableau des niveaux 0 à 5 avec leurs privilèges et limites." },
 
   // ── Clubs ────────────────────────────────────────────────────────────
+  // ── Publicité ────────────────────────────────────────────────────────
+  { key: "ads.enabled", category: "ads", type: "boolean", default: true, label: "Publicité active" },
+  { key: "ads.clientId", category: "ads", type: "string", default: "", maxLength: 40, pattern: "^ca-pub-[0-9]{10,20}$", placeholder: "ca-pub-0000000000000000", label: "Identifiant éditeur AdSense", description: "Format ca-pub-XXXXXXXXXXXXXXXX. Vide = espaces réservés affichés sans annonce." },
+  { key: "ads.slots", category: "ads", type: "json", default: { home: "", play: "", tournaments: "", tournament: "", leaderboard: "", clubs: "", wallet: "" }, label: "Identifiants des blocs d'annonces", description: "Un identifiant AdSense (data-ad-slot) par emplacement." },
+  { key: "ads.placements", category: "ads", type: "json", default: ["home", "play", "tournaments", "tournament", "leaderboard", "clubs", "wallet"], label: "Emplacements actifs" },
+  { key: "ads.showPlaceholder", category: "ads", type: "boolean", default: true, label: "Afficher l'espace réservé tant qu'AdSense n'est pas configuré" },
+
   { key: "clubs.enabled", category: "clubs", type: "boolean", default: true, label: "Clubs actifs" },
   { key: "clubs.minPointsToCreate", category: "clubs", type: "number", default: 2000, min: 0, max: 100_000_000, integer: true, label: "Points requis pour créer un club sans Premium (0 = Premium obligatoire)" },
   { key: "clubs.defaultMaxMembers", category: "clubs", type: "number", default: 30, min: 2, max: 10_000, integer: true, label: "Capacité d'un club non Premium" },
@@ -381,9 +414,12 @@ export type SettingValue<K extends SettingKey> =
   DefByKey<K> extends { type: "number" } ? number
   : DefByKey<K> extends { type: "boolean" } ? boolean
   : DefByKey<K> extends { type: "enum" } ? string
+  : DefByKey<K> extends { type: "string" } ? string
   : K extends "premium.tiers" ? PremiumTier[]
   : K extends "rating.levels" ? typeof DEFAULT_RATING_LEVELS
   : K extends "money.stakePresets" ? number[]
+  : K extends "ads.slots" ? Record<string, string>
+  : K extends "ads.placements" ? string[]
   : K extends "allowed_tournament_types" ? string[]
   : K extends "tournament_max_players" ? { min: number; max: number }
   : K extends "tournaments.prizeSplitPercent" ? [number, number, number]
@@ -426,6 +462,15 @@ export function validateSettingValue(
     case "enum":
       if (!def.options.some((o) => o.value === value)) return { ok: false, error: `${def.label} : valeur non autorisée.` };
       return { ok: true, value };
+    case "string": {
+      if (typeof value !== "string") return { ok: false, error: `${def.label} : texte attendu.` };
+      const trimmed = value.trim();
+      if (trimmed.length > def.maxLength) return { ok: false, error: `${def.label} : ${def.maxLength} caractères maximum.` };
+      if (trimmed && def.pattern && !new RegExp(def.pattern).test(trimmed)) {
+        return { ok: false, error: `${def.label} : format invalide.` };
+      }
+      return { ok: true, value: trimmed };
+    }
     case "json":
       return validateJsonSetting(key, value, def.label);
   }
@@ -451,6 +496,22 @@ function validateJsonSetting(
       if (typeof tier.privileges !== "object" || tier.privileges === null) return { ok: false, error: `Niveau ${tier.level} : privilèges requis.` };
     }
     if (!levels.has(0)) return { ok: false, error: "Le niveau 0 (gratuit) est obligatoire." };
+    return { ok: true, value };
+  }
+  if (key === "ads.slots") {
+    if (typeof value !== "object" || Array.isArray(value)) return { ok: false, error: "Objet {emplacement: identifiant} attendu." };
+    for (const [placement, slot] of Object.entries(value as Record<string, unknown>)) {
+      if (!AD_PLACEMENTS.some((p) => p.id === placement)) return { ok: false, error: `Emplacement inconnu : ${placement}.` };
+      if (typeof slot !== "string" || (slot !== "" && !/^\d{6,20}$/.test(slot))) {
+        return { ok: false, error: `Identifiant d'emplacement invalide pour ${placement} (chiffres uniquement).` };
+      }
+    }
+    return { ok: true, value };
+  }
+  if (key === "ads.placements") {
+    if (!Array.isArray(value) || !value.every((v) => AD_PLACEMENTS.some((p) => p.id === v))) {
+      return { ok: false, error: `Emplacements autorisés : ${AD_PLACEMENTS.map((p) => p.id).join(", ")}.` };
+    }
     return { ok: true, value };
   }
   if (key === "money.stakePresets") {

@@ -45,6 +45,7 @@ const ROWS: Row[] = [
   { group: "Joueur", label: "Historique consultable", render: (p) => (p.historyDays === 0 ? "Illimité" : `${p.historyDays} jours`) },
   { group: "Joueur", label: "Thèmes de profil", render: (p) => yes(p.profileThemes) },
   { group: "Joueur", label: "Badge Premium", render: (p) => yes(p.badge) },
+  { group: "Joueur", label: "Navigation sans publicité", render: (p) => yes(Boolean(p.adFree)) },
 ];
 
 export function PremiumClient() {

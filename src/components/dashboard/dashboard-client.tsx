@@ -1,5 +1,6 @@
 "use client";
 
+import { AdSlot } from "@/components/ads/ad-slot";
 import {
   ArrowDownRight,
   ArrowRight,
@@ -752,6 +753,9 @@ export function DashboardClient() {
           <span>THOT STRATÉGIE · Jeux de dames et d&apos;échecs</span>
           <span>Environnement de développement local</span>
         </footer>
+      </div>
+      <div className="mx-auto mt-8 w-full max-w-7xl">
+        <AdSlot placement="home" />
       </div>
     </main>
   );

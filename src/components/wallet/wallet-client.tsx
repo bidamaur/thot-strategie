@@ -1,5 +1,6 @@
 "use client";
 
+import { AdSlot } from "@/components/ads/ad-slot";
 import { Coins, Lock, ShieldCheck, Sparkles, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -192,6 +193,7 @@ export function WalletClient() {
           </section>
         </>
       )}
+      <AdSlot placement="wallet" />
     </PageShell>
   );
 }

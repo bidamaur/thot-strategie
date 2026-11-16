@@ -1,5 +1,6 @@
 "use client";
 
+import { AdSlot } from "@/components/ads/ad-slot";
 import { Lock, MapPin, Plus, Search, Trophy, Users } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
@@ -138,6 +139,7 @@ export function ClubsClient() {
           ))}
         </div>
       )}
+      <AdSlot placement="clubs" />
     </PageShell>
   );
 }

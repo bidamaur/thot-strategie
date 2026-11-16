@@ -1,5 +1,6 @@
 "use client";
 
+import { AdSlot } from "@/components/ads/ad-slot";
 import { Medal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState, PageHeader, PageShell } from "@/components/ui/page-header";
@@ -133,6 +134,7 @@ export function LeaderboardClient() {
           </table>
         </div>
       )}
+      <AdSlot placement="leaderboard" />
     </PageShell>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { AdSlot } from "@/components/ads/ad-slot";
 import { ArrowLeft, Crown, Flag, Gavel, Play, RefreshCw, Swords, Trophy } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -478,6 +479,7 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
           </ol>
         </section>
       )}
+      <AdSlot placement="tournament" />
     </PageShell>
   );
 }
