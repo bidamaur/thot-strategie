@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ActiveMatchBanner } from "@/components/match/active-match-banner";
+import { SiteNav } from "@/components/layout/site-nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -14,8 +15,19 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Thot Stratégie | Jeux de plateau",
-  description: "Jouez aux échecs et aux dames avec Thot Stratégie.",
+  title: {
+    default: "Thot Stratégie | Dames & Échecs en ligne",
+    template: "%s · Thot Stratégie",
+  },
+  description:
+    "Jouez aux dames et aux échecs en ligne : parties classées, tournois, Survival, clubs et classements ELO.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0f1513",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -24,7 +36,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="fr"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="flex min-h-full flex-col pb-16 lg:pb-0">
+        <SiteNav />
         {children}
         <ActiveMatchBanner />
       </body>

@@ -3,6 +3,8 @@
 import {
   ArrowLeft,
   CircleDot,
+  Coins,
+  Trophy,
   Crown,
   LoaderCircle,
   Radio,
@@ -16,7 +18,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createGameSocket } from "@/lib/socket";
-import type { GameType, MatchmakingStrategy } from "@/types";
+import type {
+  GameMode,
+  GameType,
+  JoinQueuePayload,
+  MatchmakingStrategy,
+} from "@/types";
 
 interface UserOption {
   id: string;
@@ -56,6 +63,8 @@ export function MatchmakingClient() {
   const router = useRouter();
   const socketRef = useRef<ReturnType<typeof createGameSocket> | null>(null);
   const matchmakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queuePayloadRef = useRef<JoinQueuePayload | null>(null);
+  const cutMatchIdRef = useRef<string | null>(null);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [playerId, setPlayerId] = useState("");
   const [gameType, setGameType] = useState<GameType>("CHESS");
@@ -67,6 +76,47 @@ export function MatchmakingClient() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [onlinePlayers, setOnlinePlayers] = useState(0);
+  const [activeMatchConflict, setActiveMatchConflict] = useState<{
+    matchId: string;
+    opponentUsername: string;
+    disconnectedPlayerId: string | null;
+    gracePeriodMs: number;
+  } | null>(null);
+  const [cuttingMatch, setCuttingMatch] = useState(false);
+  const [gameMode, setGameMode] = useState<GameMode>("CASUAL");
+  const [draughtsVariant, setDraughtsVariant] = useState<"INTERNATIONAL" | "ENGLISH">("INTERNATIONAL");
+  const [timeControl, setTimeControl] = useState<number | null>(null);
+  const [stake, setStake] = useState<number | null>(null);
+  const [moneyConsent, setMoneyConsent] = useState(false);
+  const [waiting, setWaiting] = useState<Record<string, number> | null>(null);
+  const [playOptions, setPlayOptions] = useState<{
+    modes: Record<GameMode, boolean>;
+    timeControl: { min: number; max: number };
+    money: {
+      minStake: number;
+      maxStake: number;
+      presets: number[];
+      commissionPercent: number;
+      eligible: boolean;
+      reason: string | null;
+      available: string;
+    };
+  } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/play/options", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((options) => {
+        if (options) setPlayOptions(options);
+      })
+      .catch(() => undefined);
+    try {
+      const stored = window.localStorage.getItem("thot-strategie-draughts-variant");
+      if (stored === "ENGLISH" || stored === "INTERNATIONAL") setDraughtsVariant(stored);
+    } catch {
+      // stockage indisponible : valeur par défaut
+    }
+  }, []);
 
   const currentUser = users.find((user) => user.id === playerId);
   const countries = useMemo(() => uniqueLocations(users, "country"), [users]);
@@ -162,6 +212,7 @@ export function MatchmakingClient() {
       socket.disconnect();
       socketRef.current = null;
     }
+    queuePayloadRef.current = null;
     setSearching(false);
     setStatus("Recherche arrêtée.");
   }
@@ -190,6 +241,35 @@ export function MatchmakingClient() {
       }
     }
 
+    if (gameMode === "MONEY" && (!stake || !moneyConsent)) {
+      setError("Choisissez une mise et confirmez votre accord avant de lancer une partie rémunérée.");
+      return;
+    }
+    const queuePayload: JoinQueuePayload = {
+      gameType,
+      mode: gameMode,
+      stake: gameMode === "MONEY" ? stake : null,
+      draughtsVariant: gameType === "CHECKERS" ? draughtsVariant : undefined,
+      timeControlMinutes: timeControl,
+      strategy,
+      criteria:
+        strategy === "TARGETED"
+          ? {
+              ...(criteria.minPoints.trim()
+                ? { minPoints: Number(criteria.minPoints) }
+                : {}),
+              ...(criteria.maxPoints.trim()
+                ? { maxPoints: Number(criteria.maxPoints) }
+                : {}),
+              ...(criteria.country ? { country: criteria.country } : {}),
+              ...(criteria.city ? { city: criteria.city } : {}),
+              ...(criteria.neighborhood
+                ? { neighborhood: criteria.neighborhood }
+                : {}),
+            }
+          : {},
+    };
+    queuePayloadRef.current = queuePayload;
     setError("");
     setStatus("Connexion au serveur de jeu…");
     setSearching(true);
@@ -209,28 +289,47 @@ export function MatchmakingClient() {
     socket.on("presence_update", ({ onlinePlayers: count }) => {
       setOnlinePlayers(count);
     });
+    socket.on("queue_stats", ({ waiting: counts }) => setWaiting(counts));
     socket.on("connect", () => {
       setStatus("Recherche en cours. Un adversaire doit aussi être connecté et rechercher une partie.");
-      socket.emit("join_queue", {
-        gameType,
-        strategy,
-        criteria:
-          strategy === "TARGETED"
-            ? {
-                ...(criteria.minPoints.trim()
-                  ? { minPoints: Number(criteria.minPoints) }
-                  : {}),
-                ...(criteria.maxPoints.trim()
-                  ? { maxPoints: Number(criteria.maxPoints) }
-                  : {}),
-                ...(criteria.country ? { country: criteria.country } : {}),
-                ...(criteria.city ? { city: criteria.city } : {}),
-                ...(criteria.neighborhood
-                  ? { neighborhood: criteria.neighborhood }
-                  : {}),
-              }
-            : {},
-      });
+      socket.emit("join_queue", queuePayload);
+    });
+    socket.on("active_match_conflict", (conflict) => {
+      if (socketRef.current !== socket) return;
+      if (matchmakingTimeoutRef.current) {
+        clearTimeout(matchmakingTimeoutRef.current);
+        matchmakingTimeoutRef.current = null;
+      }
+      setSearching(false);
+      setCuttingMatch(false);
+      setActiveMatchConflict(conflict);
+      setStatus("Une partie précédente doit être clôturée avant toute nouvelle recherche.");
+    });
+    socket.on("match_finished", ({ matchId: finishedMatchId }) => {
+      if (cutMatchIdRef.current !== finishedMatchId) return;
+      cutMatchIdRef.current = null;
+      setActiveMatchConflict(null);
+      setCuttingMatch(false);
+      const currentSocket = socketRef.current;
+      const payload = queuePayloadRef.current;
+      if (!currentSocket?.connected || !payload) {
+        setError("La partie est clôturée. Relancez la recherche d’adversaire.");
+        setStatus("Partie précédente clôturée.");
+        return;
+      }
+      setSearching(true);
+      setStatus("Partie clôturée. Nouvelle recherche en cours…");
+      currentSocket.emit("join_queue", payload);
+      matchmakingTimeoutRef.current = setTimeout(() => {
+        if (socketRef.current !== currentSocket) return;
+        setSearching(false);
+        setError(
+          "Le serveur ne répond pas. La demande a été annulée ; vérifiez la connexion puis réessayez.",
+        );
+        currentSocket.disconnect();
+        socketRef.current = null;
+        matchmakingTimeoutRef.current = null;
+      }, 12_000);
     });
     socket.on("queue_joined", () => {
       if (matchmakingTimeoutRef.current) {
@@ -245,6 +344,7 @@ export function MatchmakingClient() {
     });
     socket.on("queue_left", () => setStatus("Recherche arrêtée."));
     socket.on("match_found", ({ matchId, opponentId }) => {
+      setActiveMatchConflict(null);
       if (matchmakingTimeoutRef.current) {
         clearTimeout(matchmakingTimeoutRef.current);
         matchmakingTimeoutRef.current = null;
@@ -263,6 +363,9 @@ export function MatchmakingClient() {
         matchmakingTimeoutRef.current = null;
       }
       setSearching(false);
+      setCuttingMatch(false);
+      setActiveMatchConflict(null);
+      cutMatchIdRef.current = null;
       setError(message);
       socket.disconnect();
       socketRef.current = null;
@@ -273,6 +376,9 @@ export function MatchmakingClient() {
         matchmakingTimeoutRef.current = null;
       }
       setSearching(false);
+      setCuttingMatch(false);
+      setActiveMatchConflict(null);
+      cutMatchIdRef.current = null;
       setError(
         `Connexion au serveur impossible : ${connectionError.message}. Vérifiez que le serveur Next.js est lancé.`,
       );
@@ -282,22 +388,31 @@ export function MatchmakingClient() {
     socket.connect();
   }
 
+  function confirmCutActiveMatch() {
+    const conflict = activeMatchConflict;
+    const socket = socketRef.current;
+    if (!conflict || !socket?.connected || cuttingMatch) return;
+    setError("");
+    setCuttingMatch(true);
+    setStatus("Clôture de la partie et enregistrement de l’abandon…");
+    cutMatchIdRef.current = conflict.matchId;
+    socket.emit("cut_match", { matchId: conflict.matchId });
+  }
+
+  function cancelActiveMatchCut() {
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    queuePayloadRef.current = null;
+    cutMatchIdRef.current = null;
+    setActiveMatchConflict(null);
+    setCuttingMatch(false);
+    setStatus("Recherche annulée. La partie précédente reste active.");
+  }
+
   return (
-    <main className="min-h-screen bg-[#080d0b] px-5 py-8 text-[#f3f5ef] sm:px-8">
+    <main className="flex-1 px-4 py-6 text-ink sm:px-8 sm:py-8">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-7">
-        <header className="flex items-center justify-between border-b border-white/10 pb-5">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-2 text-sm text-white/60 transition hover:text-white"
-          >
-            <ArrowLeft size={17} />
-            Tableau de bord
-          </Link>
-          <span className="flex items-center gap-2 text-sm font-semibold tracking-wide text-emerald-100">
-            <Swords size={18} />
-            THOT STRATÉGIE
-          </span>
-        </header>
+        
 
         <section>
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-200/70">
@@ -363,6 +478,134 @@ export function MatchmakingClient() {
           ))}
         </section>
 
+        <section className="card p-5 sm:p-6">
+          <h2 className="text-base font-semibold">Type de partie</h2>
+          <p className="mt-1 text-xs text-ink-muted">
+            Vous ne serez apparié qu’avec un joueur ayant choisi exactement le même type, la même variante, la même cadence{gameMode === "MONEY" ? " et la même mise" : ""}.
+          </p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Mode de jeu">
+            {([
+              ["CASUAL", "Amicale", "Points classiques, sans effet sur l’ELO.", Users, "chip-casual"],
+              ["RATED", "Classée", "Compte pour votre classement ALO/ELO.", Trophy, "chip-rated"],
+              ["MONEY", "Rémunérée", "Mise en points argent, consentement requis.", Coins, "chip-money"],
+            ] as const).map(([mode, label, hint, Icon, chip]) => {
+              const available = playOptions ? playOptions.modes[mode] : mode !== "MONEY";
+              const selected = gameMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={!available || searching}
+                  onClick={() => {
+                    setGameMode(mode);
+                    setMoneyConsent(false);
+                  }}
+                  className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${
+                    selected ? "border-accent/60 bg-accent/[0.07]" : "border-line hover:border-line-strong"
+                  }`}
+                >
+                  <span className={`chip ${chip}`}>
+                    <Icon className="size-3.5" /> {label}
+                  </span>
+                  <span className="mt-2 block text-xs leading-5 text-ink-muted">
+                    {available ? hint : "Fermé par l’administration."}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            {gameType === "CHECKERS" && (
+              <label className="text-xs font-medium text-ink-muted">
+                Variante
+                <select
+                  value={draughtsVariant}
+                  disabled={searching}
+                  onChange={(event) => setDraughtsVariant(event.target.value as "INTERNATIONAL" | "ENGLISH")}
+                  className="field mt-1.5"
+                >
+                  <option value="INTERNATIONAL">Internationales 10×10</option>
+                  <option value="ENGLISH">Anglaises 8×8</option>
+                </select>
+              </label>
+            )}
+            <div className="text-xs font-medium text-ink-muted">
+              Cadence
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {([null, 3, 5, 10, 15] as const)
+                  .filter(
+                    (minutes) =>
+                      minutes === null ||
+                      !playOptions ||
+                      (minutes >= playOptions.timeControl.min && minutes <= playOptions.timeControl.max),
+                  )
+                  .map((minutes) => (
+                    <button
+                      key={minutes ?? "none"}
+                      type="button"
+                      disabled={searching}
+                      onClick={() => setTimeControl(minutes)}
+                      className={`btn min-h-0 px-3 py-1.5 text-xs ${timeControl === minutes ? "btn-primary" : "btn-ghost"}`}
+                    >
+                      {minutes === null ? "Sans pendule" : `${minutes} min`}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+
+          {gameMode === "MONEY" && playOptions && (
+            <div className="mt-5 rounded-xl border border-money/30 bg-money/[0.06] p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-money">
+                <Coins className="size-4" /> Partie rémunérée
+              </p>
+              {!playOptions.money.eligible ? (
+                <p className="mt-2 text-sm text-ink-soft">{playOptions.money.reason}</p>
+              ) : (
+                <>
+                  <p className="mt-1 text-xs text-ink-muted">
+                    Solde disponible : {new Intl.NumberFormat("fr-FR").format(Number(playOptions.money.available))} FCFA · commission plateforme {playOptions.money.commissionPercent} % du pot.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {playOptions.money.presets.map((amount) => (
+                      <button
+                        key={amount}
+                        type="button"
+                        disabled={searching || Number(playOptions.money.available) < amount}
+                        onClick={() => {
+                          setStake(amount);
+                          setMoneyConsent(false);
+                        }}
+                        className={`btn min-h-0 px-3 py-1.5 text-xs ${stake === amount ? "btn-primary" : "btn-ghost"}`}
+                      >
+                        {new Intl.NumberFormat("fr-FR").format(amount)} FCFA
+                      </button>
+                    ))}
+                  </div>
+                  {stake && (
+                    <label className="mt-3 flex items-start gap-2.5 text-sm text-ink-soft">
+                      <input
+                        type="checkbox"
+                        checked={moneyConsent}
+                        disabled={searching}
+                        onChange={(event) => setMoneyConsent(event.target.checked)}
+                        className="mt-1 accent-[var(--money)]"
+                      />
+                      <span>
+                        J’accepte de bloquer {new Intl.NumberFormat("fr-FR").format(stake)} FCFA. En cas de victoire je reçois{" "}
+                        {new Intl.NumberFormat("fr-FR").format(Math.round(stake * 2 * (1 - playOptions.money.commissionPercent / 100)))} FCFA ; en cas de défaite je perds ma mise ; la nulle et l’annulation rendent la mise.
+                      </span>
+                    </label>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </section>
+
         <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-5 sm:p-7">
           <h2 className="text-lg font-semibold">Type de recherche</h2>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -412,7 +655,7 @@ export function MatchmakingClient() {
                     }))
                   }
                   placeholder="Aucun minimum"
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-[#111915] px-3 py-2.5 text-white outline-none focus:border-emerald-300/60"
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-surface-2 px-3 py-2.5 text-white outline-none focus:border-emerald-300/60"
                 />
               </label>
               <label className="text-sm text-white/65">
@@ -427,7 +670,7 @@ export function MatchmakingClient() {
                     }))
                   }
                   placeholder="Aucun maximum"
-                  className="mt-2 w-full rounded-xl border border-white/10 bg-[#111915] px-3 py-2.5 text-white outline-none focus:border-emerald-300/60"
+                  className="mt-2 w-full rounded-xl border border-white/10 bg-surface-2 px-3 py-2.5 text-white outline-none focus:border-emerald-300/60"
                 />
               </label>
               {([
@@ -447,7 +690,7 @@ export function MatchmakingClient() {
                         ...(key === "city" ? { neighborhood: "" } : {}),
                       }))
                     }
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-[#111915] px-3 py-2.5 text-white outline-none focus:border-emerald-300/60"
+                    className="mt-2 w-full rounded-xl border border-white/10 bg-surface-2 px-3 py-2.5 text-white outline-none focus:border-emerald-300/60"
                   >
                     <option value="">Tous les {label.toLocaleLowerCase()}s</option>
                     {options.map((option) => (
@@ -505,6 +748,12 @@ export function MatchmakingClient() {
                 <p className="text-sm font-medium">
                   {searching ? "Recherche active" : "Aucune recherche active"}
                 </p>
+                {searching && waiting && (
+                  <span className="text-xs text-ink-muted">
+                    En file : {waiting.CASUAL ?? 0} amicale · {waiting.RATED ?? 0} classée
+                    {playOptions?.modes.MONEY ? ` · ${waiting.MONEY ?? 0} rémunérée` : ""}
+                  </span>
+                )}
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.05] px-2.5 py-1 text-xs text-white/55">
                   <Users size={13} />
                   {searching
@@ -523,11 +772,16 @@ export function MatchmakingClient() {
         <button
           type="button"
           onClick={searching ? stopSearch : beginSearch}
-          disabled={loading || !currentUser}
+          disabled={
+            loading ||
+            !currentUser ||
+            activeMatchConflict !== null ||
+            (!searching && gameMode === "MONEY" && (!stake || !moneyConsent || !playOptions?.money.eligible))
+          }
           className={`inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
             searching
               ? "border border-red-200/20 bg-red-200/[0.08] text-red-100 hover:bg-red-200/[0.13]"
-              : "bg-emerald-300 text-[#07100c] hover:bg-emerald-200"
+              : "bg-emerald-300 text-accent-ink hover:bg-emerald-200"
           }`}
         >
           {searching ? (
@@ -548,6 +802,56 @@ export function MatchmakingClient() {
           )}
         </button>
       </div>
+      {activeMatchConflict && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="active-match-title"
+            className="w-full max-w-lg rounded-2xl border border-white/10 bg-surface-2 p-6 shadow-2xl"
+          >
+            <h2 id="active-match-title" className="text-xl font-semibold">
+              Partie encore active
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-white/70">
+              Une partie contre <strong>{activeMatchConflict.opponentUsername}</strong>{" "}
+              attend encore. Vous ne pouvez pas rechercher un nouvel adversaire
+              tant que cette partie n’est pas terminée.
+            </p>
+            {activeMatchConflict.disconnectedPlayerId && (
+              <p className="mt-3 rounded-xl bg-amber-200/10 p-3 text-sm text-amber-100">
+                {activeMatchConflict.gracePeriodMs > 0
+                  ? `${activeMatchConflict.disconnectedPlayerId === playerId ? "Vous avez" : "Votre adversaire a"} 60 secondes pour revenir. Il reste environ ${Math.ceil(activeMatchConflict.gracePeriodMs / 1000)} secondes.`
+                  : "Le délai de reconnexion est écoulé ; la partie est en cours de clôture."}
+              </p>
+            )}
+            <p className="mt-3 text-sm text-rose-200/90">
+              Si vous coupez maintenant, votre adversaire remporte la partie par
+              abandon. Le résultat et les points seront enregistrés. Cette action
+              est définitive et la partie ne pourra pas être relancée.
+            </p>
+            <div className="mt-6 flex flex-col-reverse justify-end gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={cancelActiveMatchCut}
+                disabled={cuttingMatch}
+                className="rounded-lg border border-white/15 px-4 py-2.5 text-sm text-white/75 disabled:opacity-50"
+              >
+                Annuler la recherche
+              </button>
+              <button
+                type="button"
+                onClick={confirmCutActiveMatch}
+                disabled={cuttingMatch || !socketRef.current?.connected}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-300 px-4 py-2.5 text-sm font-semibold text-rose-950 disabled:opacity-50"
+              >
+                {cuttingMatch && <LoaderCircle className="size-4 animate-spin" />}
+                {cuttingMatch ? "Clôture en cours…" : "Couper et rechercher"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

@@ -306,49 +306,12 @@ export function DashboardClient() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#080d0b] text-[#f3f5ef]">
+    <main className="relative flex-1 overflow-hidden text-ink">
       <div className="pointer-events-none absolute -left-40 top-[-18rem] h-[38rem] w-[38rem] rounded-full bg-emerald-500/10 blur-[130px]" />
       <div className="pointer-events-none absolute -right-40 top-80 h-[30rem] w-[30rem] rounded-full bg-amber-400/5 blur-[120px]" />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 pb-12 sm:px-8">
-        <header className="flex items-center justify-between border-b border-white/10 py-5">
-          <Link href="/" className="flex items-center gap-3" aria-label="Accueil">
-            <span className="flex size-11 items-center justify-center rounded-2xl border border-emerald-300/20 bg-emerald-400/10 text-emerald-200">
-              <Swords size={21} />
-            </span>
-            <span>
-              <span className="block text-sm font-bold tracking-[0.18em]">
-                THOT <span className="text-emerald-300">STRATÉGIE</span>
-              </span>
-              <span className="mt-1 block text-[10px] tracking-[0.24em] text-white/40">
-                ESPACE DE JEU
-              </span>
-            </span>
-          </Link>
-          {profile ? (
-              <>
-                {profile.isAdmin && (
-                  <Link
-                    href="/admin"
-                    className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/65 transition hover:border-white/25 hover:text-white"
-                  >
-                    Administration
-                  </Link>
-                )}
-                <button
-                  type="button"
-                  onClick={handleDisconnect}
-                  className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/65 transition hover:border-white/25 hover:text-white"
-                >
-                  Déconnexion
-                </button>
-              </>
-            ) : (
-            <span className="rounded-full border border-white/10 px-4 py-2 text-xs tracking-wide text-white/50">
-              MODE DÉMO
-            </span>
-          )}
-        </header>
+      <div className="relative mx-auto flex w-full max-w-7xl flex-col px-4 pb-12 sm:px-8">
+        
 
         <section className="grid flex-1 items-center gap-12 py-12 lg:grid-cols-[1.05fr_0.95fr] lg:py-16">
           <div className="max-w-2xl">
@@ -419,26 +382,27 @@ export function DashboardClient() {
                       <span className="text-emerald-300">
                         {getMedalEmoji(profile.pointsFree)}
                       </span>
-                      Points gratuits
+                      Points classiques
                     </div>
                     <p className="mt-3 text-2xl font-semibold tabular-nums">
                       {formatPoints(profile.pointsFree)}
                     </p>
                     <p className="mt-1 text-xs text-white/35">
                       {getMedalLabel(profile.pointsFree) || "Aucun rang"} ·
-                      Le solde peut être négatif
+                      Sans valeur monétaire
                     </p>
                   </div>
                   <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
                     <div className="flex items-center gap-2 text-xs text-white/45">
                       <Wallet size={15} className="text-amber-200" />
-                      Portefeuille réel
+                      Points argent
                     </div>
                     <p className="mt-3 text-2xl font-semibold tabular-nums">
                       {formatCfa(profile.walletReal)}
                     </p>
                     <p className="mt-1 text-xs text-white/35">
-                      Solde affiché en FCFA
+                      Utilisés uniquement si vous choisissez une partie rémunérée ·{" "}
+                      <Link href="/portefeuille" className="underline hover:text-white/60">détails</Link>
                     </p>
                   </div>
                 </div>
@@ -456,7 +420,7 @@ export function DashboardClient() {
                       pattern="[A-Za-z0-9_]{3,24}"
                       value={username}
                       onChange={(event) => setUsername(event.target.value)}
-                      className="mt-2 w-full rounded-xl border border-white/10 bg-[#111915] px-4 py-3 text-sm text-white outline-none focus:border-emerald-300/60"
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-surface-2 px-4 py-3 text-sm text-white outline-none focus:border-emerald-300/60"
                     />
                   </label>
                   {([
@@ -471,7 +435,7 @@ export function DashboardClient() {
                         maxLength={80}
                         value={value}
                         onChange={(event) => setValue(event.target.value)}
-                        className="mt-2 w-full rounded-xl border border-white/10 bg-[#111915] px-4 py-3 text-sm text-white outline-none focus:border-emerald-300/60"
+                        className="mt-2 w-full rounded-xl border border-white/10 bg-surface-2 px-4 py-3 text-sm text-white outline-none focus:border-emerald-300/60"
                       />
                     </label>
                   ))}
@@ -525,7 +489,7 @@ export function DashboardClient() {
                         accept="image/jpeg,image/png,image/webp,image/gif"
                         onChange={handleUploadAvatar}
                         disabled={uploadingAvatar}
-                        className="w-full rounded-xl border border-white/10 bg-[#111915] px-4 py-3 text-sm text-white/60 outline-none focus:border-emerald-300/60 disabled:opacity-50"
+                        className="w-full rounded-xl border border-white/10 bg-surface-2 px-4 py-3 text-sm text-white/60 outline-none focus:border-emerald-300/60 disabled:opacity-50"
                       />
                       {avatar && !avatar.startsWith("http") && !avatar.startsWith("/") && selectedEmoji === avatar ? null : null}
                     </div>
@@ -571,7 +535,7 @@ export function DashboardClient() {
                         event.target.value as DraughtsVariant,
                       )
                     }
-                    className="w-full rounded-xl border border-white/10 bg-[#111915] px-4 py-3 text-sm text-white/80 outline-none focus:border-emerald-300/60 disabled:opacity-60"
+                    className="w-full rounded-xl border border-white/10 bg-surface-2 px-4 py-3 text-sm text-white/80 outline-none focus:border-emerald-300/60 disabled:opacity-60"
                   >
                     {DRAUGHTS_VARIANTS.map((variant) => (
                       <option key={variant.value} value={variant.value}>
@@ -590,7 +554,7 @@ export function DashboardClient() {
                   <span className="text-sm text-white/45">
                     Prêt pour votre prochaine partie ?
                   </span>
-                  <span className="flex size-9 items-center justify-center rounded-full bg-emerald-300 text-[#08100c]">
+                  <span className="flex size-9 items-center justify-center rounded-full bg-emerald-300 text-accent-ink">
                     <ArrowRight size={17} />
                   </span>
                 </div>
@@ -653,7 +617,7 @@ export function DashboardClient() {
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-300 px-5 py-3 text-sm font-semibold text-[#07100c] transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-300 px-5 py-3 text-sm font-semibold text-accent-ink transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {submitting ? (
                     <LoaderCircle className="animate-spin" size={17} />

@@ -96,7 +96,7 @@ export function AiGameSetup() {
     `/match/ia/dames?variant=${variant}&difficulty=${difficulty}`;
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#080d0b] text-[#f3f5ef]">
+    <main className="relative min-h-screen overflow-hidden bg-canvas text-ink">
       <div className="pointer-events-none absolute -left-40 top-[-18rem] h-[38rem] w-[38rem] rounded-full bg-emerald-500/10 blur-[130px]" />
       <div className="relative mx-auto flex min-h-screen w-full max-w-5xl flex-col px-5 pb-10 sm:px-8">
         <header className="flex items-center justify-between border-b border-white/10 py-5">

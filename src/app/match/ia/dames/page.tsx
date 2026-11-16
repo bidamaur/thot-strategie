@@ -23,7 +23,7 @@ export default async function DraughtsGamePage({
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-[#080d0b] p-8 text-white/60">
+        <main className="min-h-screen bg-canvas p-8 text-white/60">
           Préparation du damier…
         </main>
       }

@@ -1,28 +1,263 @@
 @import "tailwindcss";
 
+/*
+ * Système de design Thot Stratégie
+ * ─────────────────────────────────
+ * Thème sombre « reposant » : fonds ardoise-vert à faible contraste,
+ * texte blanc cassé (jamais #fff pur), accents désaturés. Les palettes
+ * Tailwind utilisées dans l'application (emerald, amber, rose, zinc, white)
+ * sont redéfinies ici pour adoucir toute l'interface sans réécrire chaque
+ * composant.
+ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --canvas: #0f1513;
+  --surface: #151d1a;
+  --surface-2: #1a2420;
+  --surface-3: #212d28;
+  --line: rgb(214 228 220 / 0.09);
+  --line-strong: rgb(214 228 220 / 0.16);
+  --ink: #e4e9e5;
+  --ink-soft: #b4bfb9;
+  --ink-muted: #85918b;
+  --accent: #86c7a8;
+  --accent-strong: #a5d8be;
+  --accent-ink: #0d1a14;
+  --gold: #d9bf86;
+  --danger: #e19a91;
+  --info: #93b6d6;
+  --money: #cdb46e;
+  --board-light: #e2e4d2;
+  --board-dark: #7b927f;
+  --board-frame: #26332d;
+  --focus: #a5d8be;
+  color-scheme: dark;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--canvas);
+  --color-foreground: var(--ink);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-muted: var(--ink-muted);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-ink: var(--accent-ink);
+  --color-gold: var(--gold);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-money: var(--money);
+  --color-board-light: var(--board-light);
+  --color-board-dark: var(--board-dark);
+  --color-board-frame: var(--board-frame);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@theme {
+  /* Blanc cassé : moins d'éblouissement sur fond sombre. */
+  --color-white: #e8ede9;
+  --color-black: #0a0f0d;
+
+  /* Vert sauge désaturé (remplace l'émeraude vive). */
+  --color-emerald-50: #eef6f1;
+  --color-emerald-100: #d6ebe0;
+  --color-emerald-200: #b5dbc7;
+  --color-emerald-300: #94c9ae;
+  --color-emerald-400: #79b597;
+  --color-emerald-500: #5f9d80;
+  --color-emerald-600: #4b826a;
+  --color-emerald-700: #3b6755;
+  --color-emerald-800: #2c4d40;
+  --color-emerald-900: #1f362d;
+  --color-emerald-950: #13221c;
+
+  /* Sable doux pour les avertissements et la mise en avant. */
+  --color-amber-100: #f1e6cc;
+  --color-amber-200: #e4d2a6;
+  --color-amber-300: #d6bd84;
+  --color-amber-400: #c7a868;
+  --color-amber-500: #b39252;
+  --color-amber-950: #2a2214;
+
+  --color-yellow-400: #d6bd84;
+  --color-yellow-500: #c7a868;
+
+  /* Corail atténué pour les erreurs. */
+  --color-rose-200: #efc4bd;
+  --color-rose-300: #e3a399;
+  --color-rose-400: #d48678;
+  --color-rose-500: #bf6d60;
+  --color-rose-950: #2b1714;
+
+  /* Gris à dominante verte pour l'harmonie. */
+  --color-zinc-100: #e4e9e5;
+  --color-zinc-200: #ccd4cf;
+  --color-zinc-300: #b4bfb9;
+  --color-zinc-400: #93a09a;
+  --color-zinc-500: #76837d;
+  --color-zinc-600: #5b6762;
+  --color-zinc-700: #414b47;
+  --color-zinc-800: #2a3330;
+  --color-zinc-900: #1a211e;
+
+  --radius-card: 1.25rem;
+  --shadow-soft: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 12px 32px -16px rgb(0 0 0 / 0.55);
+
+  --animate-fade-in: fade-in 220ms ease-out both;
+  --animate-rise: rise 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+html {
+  background: var(--canvas);
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgb(134 199 168 / 0.06), transparent 60%),
+    radial-gradient(900px 500px at 110% 0%, rgb(217 191 134 / 0.04), transparent 60%),
+    var(--canvas);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01";
+  line-height: 1.5;
+}
+
+::selection {
+  background: rgb(134 199 168 / 0.3);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Barres de défilement discrètes */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
+}
+
+/* ── Composants de base réutilisables ───────────────────────────── */
+@layer components {
+  .card {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-soft);
+  }
+  .card-muted {
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    border-radius: 0.9rem;
+  }
+  .eyebrow {
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.5rem;
+    padding: 0.55rem 1rem;
+    border-radius: 0.8rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition: background-color 150ms, border-color 150ms, color 150ms, opacity 150ms;
+    user-select: none;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-strong);
+  }
+  .btn-ghost {
+    border: 1px solid var(--line-strong);
+    color: var(--ink-soft);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--ink);
+  }
+  .btn-danger {
+    border: 1px solid rgb(225 154 145 / 0.3);
+    color: var(--danger);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: rgb(225 154 145 / 0.1);
+  }
+  .field {
+    width: 100%;
+    border-radius: 0.75rem;
+    border: 1px solid var(--line-strong);
+    background: var(--surface-2);
+    padding: 0.55rem 0.8rem;
+    font-size: 0.875rem;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 150ms;
+  }
+  .field:focus {
+    border-color: var(--accent);
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border-radius: 999px;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    border: 1px solid var(--line-strong);
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .chip-casual { color: var(--info); border-color: rgb(147 182 214 / 0.35); background: rgb(147 182 214 / 0.08); }
+  .chip-rated { color: var(--accent); border-color: rgb(134 199 168 / 0.35); background: rgb(134 199 168 / 0.08); }
+  .chip-money { color: var(--money); border-color: rgb(205 180 110 / 0.4); background: rgb(205 180 110 / 0.1); }
+  .tabular { font-variant-numeric: tabular-nums; }
+}
+
+/* Plateau : ne jamais dépasser la hauteur visible (mobile paysage inclus). */
+.board-fit {
+  width: min(100%, calc(100dvh - 15rem));
+  min-width: min(100%, 18rem);
+}
+@media (min-width: 1024px) {
+  .board-fit {
+    width: min(100%, calc(100dvh - 11rem));
+  }
 }
 
 @keyframes game-confetti-fall {
@@ -45,5 +280,11 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .game-confetti {
     display: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }

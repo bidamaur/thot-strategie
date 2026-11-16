@@ -4,15 +4,21 @@ import { Chess, SQUARES, type PieceSymbol, type Square } from "chess.js";
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
+  Clock,
+  Coins,
   Crown,
   Flag,
   Handshake,
+  History,
   LoaderCircle,
   LogOut,
   MessageCircle,
   Send,
-  Smile,
+  Swords,
+  Trophy,
   UserRound,
+  Users,
   Wifi,
   WifiOff,
   X,
@@ -49,13 +55,23 @@ interface MatchState {
   opponentAvatar: string | null;
   draughtsVariant: "ENGLISH" | "INTERNATIONAL" | null;
   moves: OnlinePly[];
-  status: "IN_PROGRESS" | "FINISHED" | "ABANDONED";
+  status: "IN_PROGRESS" | "FINISHED" | "ABANDONED" | "ABORTED";
   winnerId: string | null;
   scoreDelta: number | null;
+  mode?: "CASUAL" | "RATED" | "MONEY";
+  stakeAmount?: number | null;
+  timeControlMinutes?: number | null;
+  chatEnabled?: boolean;
+  moneyChange?: number | null;
+  moneyCommission?: number | null;
   pointsChange?: number | null;
   pointsBalance?: number | null;
   opponentPointsChange?: number | null;
   opponentPointsBalance?: number | null;
+  eloChange?: number | null;
+  eloBalance?: number | null;
+  opponentEloChange?: number | null;
+  opponentEloBalance?: number | null;
   drawOfferById: string | null;
   betEnabled: boolean;
   betAmount: number | null;
@@ -66,7 +82,8 @@ interface MatchState {
     | "DRAW_OFFER"
     | "RESIGNATION"
     | "DISCONNECT_FORFEIT"
-    | "TIME_OUT";
+    | "TIME_OUT"
+    | "ABORTED";
 }
 
 interface OnlineMatchClientProps {
@@ -284,8 +301,15 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
       pointsBalance,
       opponentPointsChange,
       opponentPointsBalance,
+      eloChange,
+      opponentEloChange,
+      eloBalance,
+      opponentEloBalance,
       status,
       reason,
+      mode,
+      moneyChange,
+      moneyCommission,
     }) => {
       setMatch((current) =>
         current?.matchId === finishedMatchId
@@ -298,8 +322,15 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               pointsBalance,
               opponentPointsChange,
               opponentPointsBalance,
+              eloChange,
+              opponentEloChange,
+              eloBalance,
+              opponentEloBalance,
               drawOfferById: null,
               finishReason: reason,
+              mode: mode ?? current.mode,
+              moneyChange: moneyChange ?? null,
+              moneyCommission: moneyCommission ?? null,
             }
           : current,
       );
@@ -545,7 +576,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
 
   const respondToBet = (accept: boolean) => {
     if (!match || !socketConnected || pendingAction) return;
-    if (match.betStatus !== "PROPOSED") return;
+    if (match.betStatus !== "PROPOSED" && match.betStatus !== "COUNTERED") return;
     setPendingAction(true);
     setError("");
     socketRef.current?.emit(
@@ -699,129 +730,226 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
           : "loss"
       : null;
 
+  const moveList = useMemo(() => {
+    if (!match) return [] as string[];
+    if (match.gameType === "CHESS") return chessGame?.history() ?? [];
+    const size = draughtsPosition?.board.length ?? 10;
+    const squareNumber = ({ row, col }: { row: number; col: number }) =>
+      row * (size / 2) + Math.floor(col / 2) + 1;
+    return match.moves.map((ply) =>
+      ply.kind === "CHECKERS"
+        ? `${squareNumber(ply.from)}${ply.captures.length ? "x" : "-"}${squareNumber(ply.path[ply.path.length - 1]!)}`
+        : "",
+    );
+  }, [match, chessGame, draughtsPosition]);
+
+  const moveListRef = useRef<HTMLOListElement>(null);
+  useEffect(() => {
+    const list = moveListRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, [moveList.length]);
+
   if (!match) {
     return (
-      <section className="rounded-3xl border border-white/10 bg-[#101713] p-8 text-center">
-        <LoaderCircle className="mx-auto mb-4 size-8 animate-spin text-emerald-300" />
-        <h2 className="text-xl font-semibold">Connexion à la partie</h2>
-        <p className="mt-2 text-sm text-zinc-400">
+      <section className="card mx-auto w-full max-w-md p-8 text-center animate-fade-in">
+        <LoaderCircle className="mx-auto mb-4 size-8 animate-spin text-accent" />
+        <h2 className="text-lg font-semibold">Connexion à la partie</h2>
+        <p className="mt-2 text-sm text-ink-muted">
           Synchronisation du plateau et des joueurs…
         </p>
         {!socketConnected && (
-          <p className="mt-3 text-sm text-amber-300">Connexion au serveur en cours.</p>
+          <p className="mt-3 text-sm text-gold">Connexion au serveur en cours.</p>
         )}
-        {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
+        {error && <p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
       </section>
     );
   }
 
   const gameName = match.gameType === "CHESS" ? "Échecs" : "Dames";
+  const mode = match.mode ?? "CASUAL";
+  const modeLabel = mode === "MONEY" ? "Rémunérée" : mode === "RATED" ? "Classée" : "Amicale";
   const resultDescription =
     match.finishReason === "RESIGNATION"
       ? match.winnerId === match.playerId
-        ? "Votre adversaire a abandonné. La victoire et les points ont été enregistrés."
-        : "Vous avez abandonné la partie. La victoire et les points de votre adversaire ont été enregistrés."
+        ? "Votre adversaire a abandonné."
+        : "Vous avez abandonné la partie."
       : match.finishReason === "DISCONNECT_FORFEIT"
         ? match.winnerId === match.playerId
-          ? "Votre adversaire ne s’est pas reconnecté à temps. La victoire et les points ont été enregistrés."
-          : "Vous ne vous êtes pas reconnecté à temps. La victoire et les points de votre adversaire ont été enregistrés."
+          ? "Votre adversaire ne s’est pas reconnecté à temps."
+          : "Vous ne vous êtes pas reconnecté à temps."
         : match.finishReason === "TIME_OUT"
           ? match.winnerId === match.playerId
-            ? "Votre adversaire a dépassé le temps imparti. La victoire et les points ont été enregistrés."
-            : "Vous avez dépassé le temps imparti. La victoire et les points de votre adversaire ont été enregistrés."
-        : match.finishReason === "DRAW_OFFER"
-          ? "La demande de match nul a été acceptée."
-            : match.status === "ABANDONED"
-              ? match.winnerId === match.playerId
-                ? "Votre adversaire a abandonné. La victoire et les points ont été enregistrés."
-                : "Vous avez abandonné la partie. La victoire et les points de votre adversaire ont été enregistrés."
-              : "Le résultat de la partie a été enregistré.";
+            ? "Votre adversaire a dépassé le temps imparti."
+            : "Vous avez dépassé le temps imparti."
+          : match.finishReason === "DRAW_OFFER"
+            ? "La proposition de match nul a été acceptée."
+            : "Le résultat de la partie a été enregistré côté serveur.";
   const pointsChange =
-    typeof match.pointsChange === "number" &&
-    Number.isFinite(match.pointsChange)
+    typeof match.pointsChange === "number" && Number.isFinite(match.pointsChange)
       ? match.pointsChange
-      : match.status !== "IN_PROGRESS" &&
-          typeof match.scoreDelta === "number" &&
-          Number.isFinite(match.scoreDelta)
-        ? match.winnerId === null
-          ? 0
-          : match.winnerId === match.playerId
-            ? match.scoreDelta
-            : -match.scoreDelta
-        : null;
+      : null;
   const pointsMessage =
-    pointsChange === null
-      ? "Points non disponibles"
-      : `${pointsChange > 0 ? "+" : ""}${pointsChange} point${Math.abs(pointsChange) === 1 ? "" : "s"}`;
+    mode === "MONEY"
+      ? "0 point"
+      : pointsChange === null
+        ? "Points non disponibles"
+        : `${pointsChange > 0 ? "+" : ""}${pointsChange} point${Math.abs(pointsChange) === 1 ? "" : "s"}`;
 
+  const whiteToMove = (chessGame?.turn() ?? draughtsPosition?.turn) === "w";
+  const selfTime = match.playerColor === "w" ? whiteTimeMs : blackTimeMs;
+  const opponentTime = match.playerColor === "w" ? blackTimeMs : whiteTimeMs;
+  const selfActive = match.status === "IN_PROGRESS" && whiteToMove === (match.playerColor === "w");
+  const opponentActive = match.status === "IN_PROGRESS" && !selfActive;
+  const chatAvailable = match.chatEnabled !== false;
+  const showFriendlyStake =
+    mode !== "MONEY" && match.status === "IN_PROGRESS" && match.moves.length === 0;
+
+  const respondToTime = (accept: boolean) =>
+    socketRef.current?.emit("respond_time", { matchId: match.matchId, accept });
+
+  const actionButtons = match.status === "IN_PROGRESS" && (
+    <div className="grid grid-cols-3 gap-2">
+      <button
+        type="button"
+        disabled={!canOfferDraw}
+        onClick={offerDraw}
+        title={
+          remainingPieceCount < 6
+            ? "Proposer le match nul"
+            : `Nulle possible sous 6 pièces (${remainingPieceCount})`
+        }
+        className="btn btn-ghost px-2"
+      >
+        <Handshake className="size-4" />
+        <span className="hidden sm:inline">Nulle</span>
+      </button>
+      <button
+        type="button"
+        disabled={!socketConnected || pendingAction}
+        onClick={resignMatch}
+        className="btn btn-danger px-2"
+      >
+        <Flag className="size-4" />
+        <span className="hidden sm:inline">Abandon</span>
+      </button>
+      <button
+        type="button"
+        disabled={!socketConnected || pendingAction || leavingMatch}
+        onClick={leaveMatch}
+        className="btn btn-ghost px-2"
+        title="Quitter (60 s pour revenir)"
+      >
+        <LogOut className="size-4" />
+        <span className="hidden sm:inline">{leavingMatch ? "…" : "Quitter"}</span>
+      </button>
+    </div>
+  );
+
+  const drawOfferPanel =
+    match.status === "IN_PROGRESS" && match.drawOfferById ? (
+      match.drawOfferById === match.playerId ? (
+        <p role="status" className="card-muted px-3 py-2 text-sm text-gold">
+          Proposition de nulle envoyée…
+        </p>
+      ) : (
+        <div className="card-muted flex items-center justify-between gap-2 px-3 py-2">
+          <p className="text-sm text-gold">Nulle proposée</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={!socketConnected || pendingAction}
+              onClick={() => respondToDrawOffer(true)}
+              className="btn btn-primary min-h-0 px-3 py-1.5"
+            >
+              <Check className="size-4" /> Accepter
+            </button>
+            <button
+              type="button"
+              disabled={!socketConnected || pendingAction}
+              onClick={() => respondToDrawOffer(false)}
+              className="btn btn-ghost min-h-0 px-3 py-1.5"
+              aria-label="Refuser la nulle"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+        </div>
+      )
+    ) : null;
+
+  const playerStrip = (who: "self" | "opponent") => {
+    const isSelf = who === "self";
+    const time = isSelf ? selfTime : opponentTime;
+    const active = isSelf ? selfActive : opponentActive;
+    const color = isSelf ? match.playerColor : match.playerColor === "w" ? "b" : "w";
+    const rating = isSelf ? match.eloBalance : match.opponentEloBalance;
+    const low = typeof time === "number" && time <= 30_000;
     return (
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="rounded-3xl border border-white/10 bg-[#101713] p-4 sm:p-6 flex flex-col">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">
-                {gameName} · Partie amicale
-              </p>
-              <h2 className="mt-1 truncate text-xl font-semibold">
-                Vous contre {match.opponentUsername}
-              </h2>
-              <div className="mt-2 flex items-center gap-3">
-                <div className="flex items-center gap-1.5 text-xs">
-                  <span className="w-2 h-2 rounded-full border-2 border-white" />
-                  <span className="text-zinc-400">{match.playerColor === "w" ? "Blancs" : "Noirs"}</span>
-                </div>
-                <span className={`flex items-center gap-1.5 text-xs font-medium ${isYourTurn ? "text-emerald-300" : "text-zinc-500"}`}>
-                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: isYourTurn ? "#10b981" : "#6b7280" }} />
-                  {isYourTurn ? "Votre tour" : "Tour de l&apos;adversaire"}
-                </span>
-              </div>
-            </div>
-            <span className="flex items-center gap-2 text-xs text-zinc-400">
-              {socketConnected ? <Wifi className="size-4 text-emerald-300" /> : <WifiOff className="size-4 text-rose-300" />}
-              {socketConnected ? "En ligne" : "Reconnexion"}
-            </span>
+      <div className="board-fit flex items-center justify-between gap-3 px-1">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span
+            className={`flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border ${
+              active ? "border-accent/50" : "border-line"
+            } bg-surface-2`}
+          >
+            {!isSelf && match.opponentAvatar ? (
+              match.opponentAvatar.startsWith("http") || match.opponentAvatar.startsWith("/") ? (
+                <img src={match.opponentAvatar} alt="" className="size-full object-cover" />
+              ) : (
+                <span className="text-lg">{match.opponentAvatar}</span>
+              )
+            ) : (
+              <UserRound className="size-4 text-ink-muted" />
+            )}
+          </span>
+          <div className="min-w-0">
+            <p className="flex items-center gap-2 truncate text-sm font-semibold">
+              <span className="truncate">{isSelf ? "Vous" : match.opponentUsername}</span>
+              <span
+                aria-label={color === "w" ? "Blancs" : "Noirs"}
+                className={`size-2.5 shrink-0 rounded-full border ${
+                  color === "w" ? "border-zinc-300 bg-zinc-100" : "border-zinc-500 bg-zinc-900"
+                }`}
+              />
+            </p>
+            <p className="tabular text-xs text-ink-muted">
+              {mode !== "CASUAL" && typeof rating === "number" ? `${rating} ELO` : modeLabel}
+            </p>
           </div>
+        </div>
+        {time !== null && (
+          <span
+            className={`tabular rounded-lg px-3 py-1.5 font-mono text-lg font-semibold transition-colors ${
+              active
+                ? low
+                  ? "bg-danger/20 text-danger"
+                  : "bg-accent text-accent-ink"
+                : "bg-surface-2 text-ink-muted"
+            }`}
+            aria-label={`Temps ${isSelf ? "restant" : "de l'adversaire"}`}
+          >
+            {formatClock(time)}
+          </span>
+        )}
+        {time === null && active && (
+          <span className="flex items-center gap-1.5 text-xs font-medium text-accent">
+            <span className="size-2 animate-pulse rounded-full bg-accent" />
+            {isSelf ? "À vous" : "Réfléchit…"}
+          </span>
+        )}
+      </div>
+    );
+  };
 
-          <div className="mb-3 flex justify-between text-sm font-mono text-white/80">
-            <span>Blancs : {Math.ceil((whiteTimeMs ?? 0) / 1000)}s</span>
-            <span>Noirs : {Math.ceil((blackTimeMs ?? 0) / 1000)}s</span>
-          </div>
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
+      {/* ── Colonne plateau ───────────────────────────────────────── */}
+      <section className="flex flex-col items-center gap-2 animate-fade-in">
+        {playerStrip("opponent")}
 
-          {timeProposal !== null && timeProposalBy && timeProposalBy === match.playerId && (
-            <div className="mb-3 flex items-center justify-between rounded-lg bg-amber-500/10 p-2 text-sm">
-              <span>Proposition : {timeProposal} min</span>
-              <div className="flex items-center gap-2 text-amber-200 text-xs animate-pulse">
-                En attente de la réponse de l&apos;adversaire…
-              </div>
-            </div>
-          )}
-          {timeProposal !== null && timeProposalBy && timeProposalBy !== match.playerId && (
-            <div className="mb-3 flex items-center justify-between rounded-lg bg-amber-500/10 p-2 text-sm">
-              <span>Proposition : {timeProposal} min</span>
-              <div className="flex gap-2">
-                <button onClick={() => socketRef.current?.emit("respond_time", { matchId: match!.matchId, accept: true })} className="rounded bg-emerald-500 px-2 py-1 text-xs">Accepter</button>
-                <button onClick={() => socketRef.current?.emit("respond_time", { matchId: match!.matchId, accept: false })} className="rounded bg-rose-500 px-2 py-1 text-xs">Refuser</button>
-              </div>
-            </div>
-          )}
-          {timeProposal === null && match.moves.length === 0 && (
-            <div className="mb-3 flex gap-2">
-              <button
-                onClick={() => {
-                  const m = window.prompt("Minutes (4-12) ou vide pour sans temps", "12");
-                  if (m === null) return;
-                  const minutes = m.trim() === "" ? null : Number(m);
-                  socketRef.current?.emit("propose_time", { matchId: match!.matchId, minutes: minutes ?? 12 });
-                }}
-                className="rounded bg-white/10 px-3 py-1 text-xs"
-              >
-                Proposer un temps
-              </button>
-            </div>
-          )}
-
+        <div className="board-fit relative">
           <div
-            className="mx-auto grid aspect-square w-full max-w-[640px] overflow-hidden rounded-xl border-4 border-[#26372d] shadow-2xl mb-4"
+            className="grid aspect-square w-full overflow-hidden rounded-xl border-[6px] border-board-frame shadow-[0_24px_60px_-28px_rgb(0_0_0/0.8)]"
             style={{
               gridTemplateColumns: `repeat(${match.gameType === "CHESS" ? 8 : draughtsPosition?.board.length ?? 10}, minmax(0, 1fr))`,
             }}
@@ -838,31 +966,51 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                 const isDestination = chessLegalMoves.some(
                   (move) => move.from === selectedSquare && move.to === square,
                 );
-                const key = square;
+                const lastMove = chessGame.history({ verbose: true }).at(-1);
+                const isLast = lastMove?.from === square || lastMove?.to === square;
+                const light = (row + col) % 2 === 0;
                 return (
                   <button
-                    key={key}
+                    key={square}
                     type="button"
-                    data-square={key}
-                    aria-label={`${key}${piece ? `, ${piece.color === "w" ? "blanche" : "noire"}` : ""}`}
+                    data-square={square}
+                    aria-label={`${square}${piece ? `, ${piece.color === "w" ? "blanche" : "noire"}` : ""}`}
                     disabled={!isYourTurn}
                     onPointerDown={(event) => {
                       if (piece?.color !== match.playerColor || !isYourTurn) return;
                       setSelectedSquare(square);
-                      beginDrag(event, key, CHESS_PIECES[piece.color][piece.type]);
+                      beginDrag(event, square, CHESS_PIECES[piece.color][piece.type]);
                     }}
                     onClick={() => {
                       if (!consumeClick()) selectChessSquare(square);
                     }}
                     className={[
-                      "relative flex aspect-square items-center justify-center touch-none text-[clamp(1.7rem,8vw,4rem)] leading-none focus:z-10 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-emerald-300",
-                      (row + col) % 2 === 0 ? "bg-[#d9dfc8]" : "bg-[#617d69]",
-                      isSelected ? "ring-4 ring-inset ring-emerald-300" : "",
-                      isDestination ? "after:absolute after:size-3 after:rounded-full after:bg-emerald-200/75 sm:after:size-4" : "",
-                      drag?.from === key ? "opacity-0" : "",
+                      "relative flex aspect-square items-center justify-center touch-none select-none text-[clamp(1.6rem,7.5vw,3.6rem)] leading-none focus:z-10 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-accent",
+                      light ? "bg-board-light text-zinc-900" : "bg-board-dark text-zinc-900",
+                      isLast ? "after:absolute after:inset-0 after:bg-amber-300/30" : "",
+                      isSelected ? "ring-4 ring-inset ring-accent-strong" : "",
+                      drag?.from === square ? "opacity-0" : "",
                     ].join(" ")}
                   >
-                    {piece && CHESS_PIECES[piece.color][piece.type]}
+                    {isDestination && (
+                      <span
+                        aria-hidden="true"
+                        className={`absolute z-[1] rounded-full ${piece ? "inset-1 border-4 border-zinc-900/25" : "size-[28%] bg-zinc-900/25"}`}
+                      />
+                    )}
+                    <span className="relative z-[2] drop-shadow-[0_1px_0_rgb(255_255_255/0.25)]">
+                      {piece && CHESS_PIECES[piece.color][piece.type]}
+                    </span>
+                    {displayCol === 0 && (
+                      <span className={`pointer-events-none absolute left-0.5 top-0.5 text-[9px] font-semibold sm:text-[10px] ${light ? "text-board-dark" : "text-board-light"}`}>
+                        {8 - row}
+                      </span>
+                    )}
+                    {displayRow === 7 && (
+                      <span className={`pointer-events-none absolute bottom-0.5 right-1 text-[9px] font-semibold sm:text-[10px] ${light ? "text-board-dark" : "text-board-light"}`}>
+                        {String.fromCharCode(97 + col)}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -883,6 +1031,10 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                       coordinateKey(move.from) === selectedSquare &&
                       coordinateKey(move.path[move.path.length - 1]!) === key,
                   );
+                  const canMoveFrom =
+                    isYourTurn &&
+                    piece?.color === match.playerColor &&
+                    draughtsLegalMoves.some((move) => coordinateKey(move.from) === key);
                   return (
                     <button
                       key={key}
@@ -899,19 +1051,26 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                         if (!consumeClick() && playable) selectDraughtsSquare(coordinate);
                       }}
                       className={[
-                        "relative flex aspect-square items-center justify-center touch-none focus:z-10 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-emerald-300",
-                        playable ? "bg-[#617d69]" : "bg-[#d9dfc8]",
-                        selected ? "ring-4 ring-inset ring-emerald-300" : "",
+                        "relative flex aspect-square items-center justify-center touch-none select-none focus:z-10 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-accent",
+                        playable ? "bg-board-dark" : "bg-board-light",
+                        selected ? "ring-4 ring-inset ring-accent-strong" : "",
                         drag?.from === key ? "opacity-0" : "",
                       ].join(" ")}
                     >
-                      {isDestination && <span aria-hidden="true" className="absolute z-[1] size-3 rounded-full bg-emerald-200/70 sm:size-4" />}
+                      {isDestination && (
+                        <span aria-hidden="true" className="absolute z-[1] size-[30%] rounded-full bg-accent-strong/70" />
+                      )}
                       {piece && (
-                        <span className={[
-                          "relative z-[2] flex size-[78%] items-center justify-center rounded-full border-2 text-[clamp(1rem,5vw,2.4rem)] shadow-md",
-                          piece.color === "w" ? "border-zinc-300 bg-zinc-100 text-zinc-800" : "border-zinc-900 bg-zinc-800 text-white",
-                        ].join(" ")}>
-                          {piece.king ? <Crown className="size-2/3" /> : null}
+                        <span
+                          className={[
+                            "relative z-[2] flex size-[78%] items-center justify-center rounded-full border-2 shadow-[inset_0_-3px_0_rgb(0_0_0/0.18),0_2px_4px_rgb(0_0_0/0.35)]",
+                            piece.color === "w"
+                              ? "border-[#cfc9b6] bg-[#f1ece0] text-zinc-700"
+                              : "border-[#14100d] bg-[#2b241f] text-amber-200",
+                            canMoveFrom && !selected ? "ring-2 ring-accent/60" : "",
+                          ].join(" ")}
+                        >
+                          {piece.king ? <Crown className="size-1/2" /> : null}
                         </span>
                       )}
                     </button>
@@ -919,398 +1078,302 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                 }),
               )}
           </div>
+        </div>
 
-          {drag && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none fixed z-[80] flex size-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center text-5xl drop-shadow-xl"
-              style={{ left: drag.x, top: drag.y }}
-            >
-              {drag.piece}
-            </span>
-          )}
-          {error && <p role="alert" className="mt-4 rounded-xl bg-rose-950/60 p-3 text-sm text-rose-200">{error}</p>}
-          {networkNotice && (
-            <p role="status" className="mt-4 rounded-xl bg-amber-950/60 p-3 text-sm text-amber-200">
-              {networkNotice}
-              {reconnectSeconds > 0 && ` ${reconnectSeconds} secondes.`}
+        {playerStrip("self")}
+
+        {/* Barre d'actions compacte (toujours visible sous le plateau) */}
+        <div className="board-fit mt-1 space-y-2">
+          {drawOfferPanel}
+          <div className="flex gap-2">
+            <div className="flex-1">{actionButtons}</div>
+            {chatAvailable && (
+              <button
+                type="button"
+                onClick={() => setChatOpen(true)}
+                className="btn btn-ghost relative px-3 lg:hidden"
+                aria-label="Ouvrir le chat"
+              >
+                <MessageCircle className="size-4" />
+                {chatMessages.length > 0 && (
+                  <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-accent text-[10px] font-bold text-accent-ink">
+                    {Math.min(chatMessages.length, 9)}
+                  </span>
+                )}
+              </button>
+            )}
+          </div>
+          {error && (
+            <p role="alert" className="rounded-xl border border-danger/25 bg-danger/10 px-3 py-2 text-sm text-danger">
+              {error}
             </p>
           )}
-        </section>
+          {networkNotice && (
+            <p role="status" className="rounded-xl border border-gold/25 bg-gold/10 px-3 py-2 text-sm text-gold">
+              {networkNotice}
+              {reconnectSeconds > 0 && ` ${reconnectSeconds} s.`}
+            </p>
+          )}
+        </div>
 
-      <aside className="space-y-4">
-        <div className="rounded-3xl border border-white/10 bg-[#101713] p-5">
-          <div className="mb-4 flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-full bg-white/5 overflow-hidden border border-white/10">
-              {match.opponentAvatar && (
-                match.opponentAvatar.startsWith("http") || match.opponentAvatar.startsWith("/")
-                  ? (
-                    <img src={match.opponentAvatar} alt="Avatar adversaire" className="size-full object-cover" />
-                  )
-                  : (
-                    <span className="text-lg">{match.opponentAvatar}</span>
-                  )
-              )}
-              {!match.opponentAvatar && <UserRound size={20} />}
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs tracking-[0.2em] text-white/40">ADVERSAIRE</p>
-              <h3 className="mt-0.5 truncate text-lg font-semibold">{match.opponentUsername}</h3>
-              <span className={`mt-0.5 inline-flex items-center gap-1 text-xs font-medium ${match.playerColor === "w" ? "text-amber-100" : "text-zinc-400"}`}>
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: match.playerColor === "w" ? "#f59e0b" : "#6b7280" }} />
-                {match.playerColor === "w" ? "Noirs" : "Blancs"}
+        {drag && (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none fixed z-[80] flex size-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center text-5xl drop-shadow-xl"
+            style={{ left: drag.x, top: drag.y }}
+          >
+            {drag.piece}
+          </span>
+        )}
+      </section>
+
+      {/* ── Panneau latéral : informations secondaires ────────────── */}
+      <aside className="flex flex-col gap-3 lg:max-h-[calc(100dvh-7rem)]">
+        <div className="card p-4">
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className={`chip ${mode === "MONEY" ? "chip-money" : mode === "RATED" ? "chip-rated" : "chip-casual"}`}
+            >
+              {mode === "MONEY" ? <Coins className="size-3.5" /> : mode === "RATED" ? <Trophy className="size-3.5" /> : <Users className="size-3.5" />}
+              {modeLabel}
+              {mode === "MONEY" && match.stakeAmount ? ` · ${formatCfa(match.stakeAmount)}` : ""}
+            </span>
+            <span className="flex items-center gap-1.5 text-xs text-ink-muted">
+              {socketConnected ? <Wifi className="size-3.5 text-accent" /> : <WifiOff className="size-3.5 text-danger" />}
+              {socketConnected ? "Connecté" : "Reconnexion…"}
+            </span>
+          </div>
+          <p className="mt-3 text-sm font-semibold">
+            {gameName}
+            {match.gameType === "CHECKERS" && (
+              <span className="font-normal text-ink-muted">
+                {" "}· {match.draughtsVariant === "ENGLISH" ? "anglaises 8×8" : "internationales 10×10"}
               </span>
-            </div>
-          </div>
+            )}
+          </p>
+          <p className="mt-0.5 text-xs text-ink-muted">
+            {match.timeControlMinutes ? `${match.timeControlMinutes} min par joueur` : "Sans pendule"}
+            {" · "}
+            {mode === "MONEY"
+              ? "points argent uniquement"
+              : mode === "RATED"
+                ? "compte pour votre ELO"
+                : "n’affecte pas votre ELO"}
+          </p>
 
-          <div className="mb-4 grid grid-cols-2 gap-3">
-            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-              <p className="text-xs text-zinc-400 uppercase">Vos points</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">
-                {typeof match.pointsBalance === "number" ? match.pointsBalance : "—"}
-              </p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-              <p className="text-xs text-zinc-400 uppercase">Points adversaire</p>
-              <p className="mt-1 text-lg font-semibold tabular-nums">
-                {typeof match.opponentPointsBalance === "number" ? match.opponentPointsBalance : "—"}
-              </p>
-            </div>
-          </div>
-
-          <div className="mb-4 space-y-3 text-sm">
-            <div className="flex justify-between gap-3"><span className="text-zinc-400">Vous</span><span>{match.playerColor === "w" ? "Blancs" : "Noirs"}</span></div>
-            <div className="flex justify-between gap-3"><span className="text-zinc-400">Adversaire</span><span className="truncate">{match.opponentUsername}</span></div>
-            <div className="flex justify-between gap-3"><span className="text-zinc-400">Coups joués</span><span>{match.moves.length}</span></div>
-          </div>
-
-          {match.status === "IN_PROGRESS" && match.moves.length === 0 && (
-            <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-emerald-300">Mise volontaire</p>
-              {match.betStatus === "PROPOSED" && match.betAmount !== null && match.betProposedById ? (
-                match.betProposedById === match.playerId ? (
-                  <p role="status" className="rounded-xl bg-amber-950/50 p-3 text-sm text-amber-200">
-                    Votre mise de {match.betAmount} point{match.betAmount > 1 ? "s" : ""} attend la réponse de l&apos;adversaire.
-                  </p>
-                ) : (
-                  <div className="space-y-2 rounded-xl bg-amber-950/50 p-3">
-                    <p className="text-sm text-amber-200">L&apos;adversaire propose une mise de {match.betAmount} point{match.betAmount > 1 ? "s" : ""}.</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        disabled={!socketConnected || pendingAction}
-                        onClick={() => respondToBet(true)}
-                        className="inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-300 px-2 py-2 text-sm font-semibold text-[#08100c] disabled:opacity-50"
-                      >
-                        <Check className="size-4" /> Accepter
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!socketConnected || pendingAction}
-                        onClick={() => respondToBet(false)}
-                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-white/15 px-2 py-2 text-sm disabled:opacity-50"
-                      >
-                        <X className="size-4" /> Refuser
-                      </button>
-                    </div>
-                    <div className="mt-2 flex gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        max="1000"
-                        placeholder="Montant"
-                        ref={counterBetAmountInputRef}
-                        className="flex-1 rounded-xl border border-white/10 bg-[#111915] px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/60 disabled:opacity-50"
-                        disabled={!socketConnected || pendingAction}
-                      />
-                      <button
-                        type="button"
-                        disabled={!socketConnected || pendingAction}
-                        onClick={() => {
-                          const input = counterBetAmountInputRef.current;
-                          const amount = input ? Number(input.value) : 0;
-                          if (amount >= 1 && amount <= 1000) counterBet(amount);
-                        }}
-                        className="rounded-xl border border-amber-200/30 bg-amber-200/10 px-3 py-2 text-sm font-medium text-amber-100 hover:bg-amber-200/20 disabled:opacity-50"
-                      >
-                        Surmiser
-                      </button>
-                    </div>
-                  </div>
-                )
-              ) : match.betStatus === "COUNTERED" && match.betAmount !== null && match.betProposedById ? (
-                match.betProposedById === match.playerId ? (
-                  <div className="space-y-2 rounded-xl bg-amber-950/50 p-3">
-                    <p className="text-sm text-amber-200">L&apos;adversaire a surmisé à {match.betAmount} point{match.betAmount > 1 ? "s" : ""}.</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        disabled={!socketConnected || pendingAction}
-                        onClick={() => respondToBet(true)}
-                        className="inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-300 px-2 py-2 text-sm font-semibold text-[#08100c] disabled:opacity-50"
-                      >
-                        <Check className="size-4" /> Accepter
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!socketConnected || pendingAction}
-                        onClick={() => respondToBet(false)}
-                        className="inline-flex items-center justify-center gap-1 rounded-lg border border-white/15 px-2 py-2 text-sm disabled:opacity-50"
-                      >
-                        <X className="size-4" /> Refuser
-                      </button>
-                    </div>
-                    <div className="mt-2 flex gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        max="1000"
-                        placeholder="Montant"
-                        ref={counterBetAmountInputRef}
-                        className="flex-1 rounded-xl border border-white/10 bg-[#111915] px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/60 disabled:opacity-50"
-                        disabled={!socketConnected || pendingAction}
-                      />
-                      <button
-                        type="button"
-                        disabled={!socketConnected || pendingAction}
-                        onClick={() => {
-                          const input = counterBetAmountInputRef.current;
-                          const amount = input ? Number(input.value) : 0;
-                          if (amount >= 1 && amount <= 1000) counterBet(amount);
-                        }}
-                        className="rounded-xl border border-amber-200/30 bg-amber-200/10 px-3 py-2 text-sm font-medium text-amber-100 hover:bg-amber-200/20 disabled:opacity-50"
-                      >
-                        Surmiser
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-2 rounded-xl bg-amber-950/50 p-3">
-                    <p className="text-sm text-amber-200">Votre surmise de {match.betAmount} point{match.betAmount > 1 ? "s" : ""} attend la réponse de l&apos;adversaire.</p>
-                    <button
-                      type="button"
-                      disabled={!socketConnected || pendingAction}
-                      onClick={() => respondToBet(false)}
-                      className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-white/15 px-2 py-2 text-sm disabled:opacity-50"
-                    >
-                      <X className="size-4" /> Annuler la surmise
-                    </button>
-                  </div>
-                )
+          {timeProposal !== null && timeProposalBy && (
+            <div className="card-muted mt-3 flex items-center justify-between gap-2 px-3 py-2 text-sm">
+              <span className="flex items-center gap-1.5">
+                <Clock className="size-4 text-gold" /> {timeProposal} min proposées
+              </span>
+              {timeProposalBy === match.playerId ? (
+                <span className="text-xs text-ink-muted">En attente…</span>
               ) : (
-                <>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-zinc-400">Votre solde</span>
-                    <span className="text-xs font-medium text-white">
-                      {typeof match.pointsBalance === "number" ? match.pointsBalance : "—"} pts
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      min="1"
-                      max="1000"
-                      placeholder="Montant"
-                      ref={betAmountInputRef}
-                      className="flex-1 rounded-xl border border-white/10 bg-[#111915] px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/60 disabled:opacity-50"
-                      disabled={!socketConnected || pendingAction}
-                    />
-                    <button
-                      type="button"
-                      disabled={
-                        !socketConnected ||
-                        pendingAction ||
-                        typeof match.pointsBalance !== "number" ||
-                        match.pointsBalance < 1
-                      }
-                      onClick={() => {
-                        const input = betAmountInputRef.current;
-                        const amount = input ? Number(input.value) : 0;
-                        if (amount >= 1 && amount <= 1000) proposeBet(amount);
-                      }}
-                      className="rounded-xl border border-emerald-200/30 bg-emerald-600 px-3 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-500 disabled:opacity-50 transition"
-                    >
-                      Proposer une mise
-                    </button>
-                  </div>
-                </>
+                <span className="flex gap-1.5">
+                  <button type="button" onClick={() => respondToTime(true)} className="btn btn-primary min-h-0 px-2.5 py-1 text-xs">Oui</button>
+                  <button type="button" onClick={() => respondToTime(false)} className="btn btn-ghost min-h-0 px-2.5 py-1 text-xs">Non</button>
+                </span>
               )}
             </div>
           )}
+          {timeProposal === null && match.status === "IN_PROGRESS" && match.moves.length === 0 && mode === "CASUAL" && (
+            <div className="mt-3">
+              <p className="eyebrow mb-1.5">Proposer une cadence</p>
+              <div className="flex flex-wrap gap-1.5">
+                {[3, 5, 10, 15].map((minutes) => (
+                  <button
+                    key={minutes}
+                    type="button"
+                    onClick={() => socketRef.current?.emit("propose_time", { matchId: match.matchId, minutes })}
+                    className="btn btn-ghost min-h-0 px-2.5 py-1 text-xs"
+                  >
+                    {minutes} min
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
-          {match.status === "IN_PROGRESS" && (
-            <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
-              {match.drawOfferById === match.playerId ? (
-                <p role="status" className="rounded-xl bg-amber-950/50 p-3 text-sm text-amber-200">
-                  Votre demande de match nul attend la réponse de l&apos;adversaire.
-                </p>
-              ) : match.drawOfferById ? (
-                <div className="space-y-2 rounded-xl bg-amber-950/50 p-3">
-                  <p className="text-sm text-amber-200">L&apos;adversaire propose un match nul.</p>
+        {showFriendlyStake && (
+          <details className="card group p-4" open={match.betStatus === "PROPOSED" || match.betStatus === "COUNTERED"}>
+            <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-semibold">
+              <span className="flex items-center gap-2">
+                <Swords className="size-4 text-accent" /> Défi en points classiques
+              </span>
+              <ChevronDown className="size-4 text-ink-muted transition group-open:rotate-180" />
+            </summary>
+            <p className="mt-2 text-xs text-ink-muted">
+              Facultatif, avant le premier coup. Aucune valeur monétaire.
+            </p>
+            {(match.betStatus === "PROPOSED" || match.betStatus === "COUNTERED") &&
+            match.betAmount !== null &&
+            match.betProposedById ? (
+              match.betProposedById === match.playerId ? (
+                <div className="mt-3 space-y-2">
+                  <p role="status" className="text-sm text-gold">
+                    Défi de {match.betAmount} pts en attente de réponse.
+                  </p>
+                  {match.betStatus === "COUNTERED" && (
+                    <button type="button" disabled={!socketConnected || pendingAction} onClick={() => respondToBet(false)} className="btn btn-ghost w-full">
+                      Annuler
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  <p className="text-sm text-gold">
+                    {match.betStatus === "COUNTERED" ? "Contre-proposition" : "Défi proposé"} : {match.betAmount} pts
+                  </p>
                   <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      disabled={!socketConnected || pendingAction}
-                      onClick={() => respondToDrawOffer(true)}
-                      className="inline-flex items-center justify-center gap-1 rounded-lg bg-emerald-300 px-2 py-2 text-sm font-semibold text-[#08100c] disabled:opacity-50"
-                    >
+                    <button type="button" disabled={!socketConnected || pendingAction} onClick={() => respondToBet(true)} className="btn btn-primary">
                       <Check className="size-4" /> Accepter
                     </button>
-                    <button
-                      type="button"
-                      disabled={!socketConnected || pendingAction}
-                      onClick={() => respondToDrawOffer(false)}
-                      className="inline-flex items-center justify-center gap-1 rounded-lg border border-white/15 px-2 py-2 text-sm disabled:opacity-50"
-                    >
+                    <button type="button" disabled={!socketConnected || pendingAction} onClick={() => respondToBet(false)} className="btn btn-ghost">
                       <X className="size-4" /> Refuser
                     </button>
                   </div>
-                </div>
-              ) : (
-                <>
-                  {remainingPieceCount < 6 ? (
+                  <div className="flex gap-2">
+                    <input type="number" min="1" placeholder="Autre montant" ref={counterBetAmountInputRef} className="field" disabled={!socketConnected || pendingAction} />
                     <button
                       type="button"
-                      disabled={!canOfferDraw}
-                      onClick={offerDraw}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-amber-200/30 px-4 py-2.5 text-sm font-medium text-amber-100 hover:bg-amber-200/10 disabled:opacity-50"
+                      disabled={!socketConnected || pendingAction}
+                      onClick={() => {
+                        const amount = Number(counterBetAmountInputRef.current?.value ?? 0);
+                        if (Number.isInteger(amount) && amount >= 1) counterBet(amount);
+                      }}
+                      className="btn btn-ghost shrink-0"
                     >
-                      <Handshake className="size-4" /> Demander le match nul
+                      Relancer
                     </button>
-                  ) : (
-                    <p className="text-xs text-zinc-500">
-                      Demande de nul disponible sous 6 pions ({remainingPieceCount} actuellement).
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    disabled={!socketConnected || pendingAction}
-                    onClick={resignMatch}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-300/25 px-4 py-2.5 text-sm font-medium text-rose-200 hover:bg-rose-300/10 disabled:opacity-50"
-                  >
-                    <Flag className="size-4" /> Abandonner
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!socketConnected || pendingAction || leavingMatch}
-                    onClick={leaveMatch}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-zinc-300 hover:bg-white/5 disabled:opacity-50"
-                  >
-                    <LogOut className="size-4" />
-                    {leavingMatch ? "Déconnexion…" : "Quitter la partie"}
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-[#101713] p-4 flex flex-col h-[320px]">
-          <div className="flex items-center justify-between mb-3">
-            <button
-              type="button"
-              onClick={() => setChatOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-white/5 transition"
-            >
-              <MessageCircle className="size-4" /> Chat
-            </button>
-            <span className="text-xs text-zinc-500">{chatMessages.length} message{chatMessages.length > 1 ? "s" : ""}</span>
-          </div>
-          <div
-            id="chat-mini-messages"
-            className="flex-1 overflow-y-auto space-y-2 pr-2 scrollbar-thin scrollbar-track-[#111915] scrollbar-thumb-[#374151] scrollbar-thumb-hover-[#4b5563]"
-          >
-            {chatMessages.length === 0 ? (
-              <p className="text-xs text-zinc-500 italic">Aucun message pour l&apos;instant.</p>
-            ) : (
-              chatMessages.slice(-6).map((m) => (
-                <div
-                  key={m.id}
-                  className={`flex gap-2 ${m.from === match.playerId ? "justify-end" : "justify-start"}`}
-                >
-                  <div className="max-w-[80%] break-words">
-                    <span className={`text-xs font-semibold block ${m.from === match.playerId ? "text-emerald-300" : "text-amber-100"}`}>
-                      {m.from === match.playerId ? "Vous" : match.opponentUsername}
-                    </span>
-                    <span className={`inline-block rounded-lg px-2 py-1 text-xs text-white ${m.from === match.playerId ? "bg-emerald-600/70" : "bg-white/10"}`}>
-                      {m.text}
-                    </span>
-                    <span className="text-[10px] text-zinc-500 block mt-0.5">
-                      {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </span>
                   </div>
                 </div>
-              ))
+              )
+            ) : match.betStatus === "ACCEPTED" ? (
+              <p className="mt-3 text-sm text-accent">Défi accepté : {match.betAmount} pts chacun.</p>
+            ) : (
+              <div className="mt-3 flex gap-2">
+                <input type="number" min="1" placeholder="Montant" ref={betAmountInputRef} className="field" disabled={!socketConnected || pendingAction} />
+                <button
+                  type="button"
+                  disabled={!socketConnected || pendingAction || typeof match.pointsBalance !== "number" || match.pointsBalance < 1}
+                  onClick={() => {
+                    const amount = Number(betAmountInputRef.current?.value ?? 0);
+                    if (Number.isInteger(amount) && amount >= 1) proposeBet(amount);
+                  }}
+                  className="btn btn-primary shrink-0"
+                >
+                  Proposer
+                </button>
+              </div>
             )}
-          </div>
-          <div className="mt-3 flex gap-2">
-            <input
-              type="text"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void sendChatMessage();
-                }
-              }}
-              placeholder="Écrire un message…"
-              className="flex-1 rounded-xl border border-white/10 bg-[#111915] px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/60 disabled:opacity-50"
-              disabled={!socketConnected}
-            />
-            <button
-              type="button"
-              onClick={sendChatMessage}
-              disabled={!chatInput.trim() || !socketConnected}
-              className="rounded-xl border border-emerald-200/20 bg-emerald-600 px-3 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-500 disabled:opacity-50 transition"
-            >
-              <Send className="size-4" />
-            </button>
-          </div>
-          {chatMessages.length > 0 && (
-            <p className="mt-2 text-[10px] text-zinc-500 italic">
-              Cliquez sur &quot;Chat&quot; pour ouvrir la conversation complète avec emoji.
+            <p className="mt-2 text-xs text-ink-muted tabular">
+              Votre solde : {typeof match.pointsBalance === "number" ? match.pointsBalance : "—"} pts
             </p>
+          </details>
+        )}
+
+        <div className="card flex min-h-0 flex-col p-4">
+          <p className="eyebrow flex items-center gap-1.5">
+            <History className="size-3.5" /> Coups ({match.moves.length})
+          </p>
+          {moveList.length === 0 ? (
+            <p className="mt-2 text-xs text-ink-muted">La partie n’a pas encore commencé.</p>
+          ) : (
+            <ol
+              ref={moveListRef}
+              className="tabular mt-2 grid max-h-44 grid-cols-[2rem_1fr_1fr] gap-x-2 gap-y-0.5 overflow-y-auto font-mono text-xs lg:max-h-56"
+            >
+              {Array.from({ length: Math.ceil(moveList.length / 2) }, (_, i) => (
+                <li key={i} className="contents">
+                  <span className="text-ink-muted">{i + 1}.</span>
+                  <span className={i * 2 === moveList.length - 1 ? "text-accent" : ""}>{moveList[i * 2]}</span>
+                  <span className={i * 2 + 1 === moveList.length - 1 ? "text-accent" : ""}>{moveList[i * 2 + 1] ?? ""}</span>
+                </li>
+              ))}
+            </ol>
           )}
         </div>
 
-        <Link href="/match/en-ligne" className="flex items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm font-medium hover:bg-white/5">
-          <ArrowLeft className="size-4" /> Retour au matchmaking
+        {chatAvailable && (
+          <div className="card hidden min-h-[220px] flex-1 flex-col p-4 lg:flex">
+            <div className="flex items-center justify-between">
+              <p className="eyebrow flex items-center gap-1.5">
+                <MessageCircle className="size-3.5" /> Chat
+              </p>
+              <button type="button" onClick={() => setChatOpen(true)} className="text-xs text-ink-muted hover:text-ink">
+                Agrandir
+              </button>
+            </div>
+            <div id="chat-mini-messages" className="mt-2 flex-1 space-y-1.5 overflow-y-auto pr-1">
+              {chatMessages.length === 0 ? (
+                <p className="text-xs text-ink-muted">Aucun message.</p>
+              ) : (
+                chatMessages.slice(-30).map((m) => (
+                  <p key={m.id} className="text-sm leading-5">
+                    <span className={`font-semibold ${m.from === match.playerId ? "text-accent" : "text-gold"}`}>
+                      {m.from === match.playerId ? "Vous" : match.opponentUsername}
+                    </span>{" "}
+                    <span className="break-words text-ink-soft">{m.text}</span>
+                  </p>
+                ))
+              )}
+            </div>
+            <form
+              className="mt-2 flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                sendChatMessage();
+              }}
+            >
+              <input
+                type="text"
+                value={chatInput}
+                maxLength={500}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Message…"
+                className="field"
+                disabled={!socketConnected}
+              />
+              <button type="submit" disabled={!chatInput.trim() || !socketConnected} className="btn btn-primary shrink-0 px-3" aria-label="Envoyer">
+                <Send className="size-4" />
+              </button>
+            </form>
+          </div>
+        )}
+
+        <Link href="/match/en-ligne" className="btn btn-ghost">
+          <ArrowLeft className="size-4" /> Matchmaking
         </Link>
       </aside>
 
-      {chatOpen && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/80 p-4 backdrop-blur-sm sm:items-center">
+      {chatOpen && chatAvailable && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 backdrop-blur-sm animate-fade-in sm:items-center sm:p-4" onClick={() => setChatOpen(false)}>
           <section
-            className="w-full max-w-md rounded-3xl border border-white/10 bg-[#101713] p-5 shadow-2xl sm:max-w-lg sm:p-7"
+            className="card flex max-h-[80dvh] w-full max-w-lg flex-col rounded-b-none p-5 animate-rise sm:rounded-b-[var(--radius-card)]"
+            onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Conversation — {match.opponentUsername}</h2>
-              <button
-                type="button"
-                onClick={() => setChatOpen(false)}
-                className="rounded-lg p-1.5 text-zinc-400 hover:bg-white/10 hover:text-white transition"
-              >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-semibold">Chat — {match.opponentUsername}</h2>
+              <button type="button" onClick={() => setChatOpen(false)} className="rounded-lg p-1.5 text-ink-muted hover:bg-surface-3 hover:text-ink" aria-label="Fermer">
                 <X className="size-5" />
               </button>
             </div>
-            <div ref={chatContainerRef} id="chat-full-messages" className="flex-1 overflow-y-auto space-y-3 pr-2 mb-4 scrollbar-thin scrollbar-track-[#111915] scrollbar-thumb-[#374151] scrollbar-thumb-hover-[#4b5563]">
+            <div ref={chatContainerRef} className="mb-3 min-h-[30dvh] flex-1 space-y-2 overflow-y-auto pr-1">
               {chatMessages.length === 0 ? (
-                <p className="text-xs text-zinc-500 italic text-center">Aucun message pour l&apos;instant.</p>
+                <p className="text-center text-xs text-ink-muted">Aucun message pour l’instant.</p>
               ) : (
                 chatMessages.map((m) => (
-                  <div
-                    key={m.id}
-                    className={`flex gap-2 ${m.from === match.playerId ? "justify-end" : "justify-start"}`}
-                  >
-                    <div className="max-w-[85%] break-words">
-                      <span className={`text-xs font-semibold block ${m.from === match.playerId ? "text-emerald-300" : "text-amber-100"}`}>
-                        {m.from === match.playerId ? "Vous" : match.opponentUsername}
-                      </span>
-                      <span className={`inline-block rounded-lg px-3 py-1.5 text-sm text-white ${m.from === match.playerId ? "bg-emerald-600/80" : "bg-white/10"}`}>
+                  <div key={m.id} className={`flex ${m.from === match.playerId ? "justify-end" : "justify-start"}`}>
+                    <div className="max-w-[85%]">
+                      <span
+                        className={`inline-block break-words rounded-2xl px-3 py-1.5 text-sm ${
+                          m.from === match.playerId ? "bg-accent/20 text-ink" : "bg-surface-3 text-ink"
+                        }`}
+                      >
                         {m.text}
                       </span>
-                      <span className="text-[10px] text-zinc-500 block mt-0.5">
+                      <span className="mt-0.5 block text-[10px] text-ink-muted">
                         {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
                     </div>
@@ -1318,103 +1381,110 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                 ))
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="mb-2 flex flex-wrap gap-1">
+              {["👍", "👏", "😄", "😮", "🤝", "🔥", "😅", "🙏"].map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => setChatInput((prev) => prev + emoji)}
+                  className="rounded-lg px-1.5 py-0.5 text-lg hover:bg-surface-3"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                sendChatMessage();
+              }}
+            >
               <input
                 type="text"
                 value={chatInput}
+                maxLength={500}
                 onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void sendChatMessage();
-                  }
-                }}
                 placeholder="Écrire un message…"
-                className="flex-1 rounded-xl border border-white/10 bg-[#111915] px-4 py-3 text-sm text-white outline-none focus:border-emerald-300/60 disabled:opacity-50"
+                className="field"
                 disabled={!socketConnected}
+                autoFocus
               />
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setEmojiPickerOpen(!emojiPickerOpen)}
-                  className="rounded-lg p-2 text-zinc-400 hover:bg-white/10 hover:text-emerald-300 transition"
-                >
-                  <Smile className="size-5" />
-                </button>
-                {emojiPickerOpen && (
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 rounded-xl border border-white/10 bg-[#111915] p-2 shadow-xl flex flex-wrap gap-1">
-                    {["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😙","😚","😋","😛","😜","🤪","😝","🤗","🤭","🤫","🤔","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","😵","🤯","🤠","🥳","😎","🤓","🧐","😕","😟","🙁","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿","💀","💩","👻","👽","🤖","🎃","😺","😸","😹","😻","😼","😽","🙀","😿","😾"].map((emoji) => (
-                      <button
-                        key={emoji}
-                        type="button"
-                        onClick={() => {
-                          setChatInput((prev) => prev + emoji);
-                          setEmojiPickerOpen(false);
-                        }}
-                        className="text-center p-1 rounded hover:bg-white/10 text-lg"
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={sendChatMessage}
-                disabled={!chatInput.trim() || !socketConnected}
-                className="rounded-xl border border-emerald-200/20 bg-emerald-600 px-4 py-3 text-sm font-semibold text-emerald-900 hover:bg-emerald-500 disabled:opacity-50 transition"
-              >
-                <Send className="size-5" />
+              <button type="submit" disabled={!chatInput.trim() || !socketConnected} className="btn btn-primary shrink-0" aria-label="Envoyer">
+                <Send className="size-4" />
               </button>
-            </div>
+            </form>
           </section>
         </div>
       )}
 
       {rematchWaiting && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rematch-waiting-title"
-            className="w-full max-w-md rounded-3xl border border-white/10 bg-[#101713] p-7 text-center shadow-2xl"
-          >
-            <LoaderCircle className="mx-auto size-10 animate-spin text-emerald-300" />
-            <h2 id="rematch-waiting-title" className="mt-5 text-2xl font-semibold">
-              Nouvelle partie demandée
-            </h2>
-            <p className="mt-3 text-sm text-zinc-300">
-              La partie redémarrera sur ce plateau dès que {match.opponentUsername} aura aussi choisi « Nouvelle partie ».
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-fade-in">
+          <section role="dialog" aria-modal="true" aria-labelledby="rematch-waiting-title" className="card w-full max-w-md p-7 text-center animate-rise">
+            <LoaderCircle className="mx-auto size-9 animate-spin text-accent" />
+            <h2 id="rematch-waiting-title" className="mt-5 text-xl font-semibold">Revanche demandée</h2>
+            <p className="mt-2 text-sm text-ink-muted">
+              La partie redémarre dès que {match.opponentUsername} accepte.
+              {mode === "MONEY" && match.stakeAmount ? ` Une nouvelle mise de ${formatCfa(match.stakeAmount)} sera bloquée.` : ""}
             </p>
-            <button
-              type="button"
-              onClick={quitAfterMatch}
-              className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
-            >
-              <LogOut size={16} /> Quitter le jeu
+            <button type="button" onClick={quitAfterMatch} className="btn btn-ghost mt-6 w-full">
+              <LogOut size={16} /> Quitter
             </button>
           </section>
         </div>
       )}
+
+      {match.status === "ABORTED" && !rematchWaiting && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm animate-fade-in">
+          <section role="dialog" aria-modal="true" className="card w-full max-w-md p-7 text-center animate-rise">
+            <h2 className="text-xl font-semibold">Partie annulée</h2>
+            <p className="mt-2 text-sm text-ink-muted">
+              La partie s’est arrêtée avant de vraiment commencer : aucun point, aucun ELO
+              {mode === "MONEY" ? " et les mises ont été intégralement rendues" : ""}.
+            </p>
+            <div className="mt-6 grid gap-2 sm:grid-cols-2">
+              <Link href="/match/en-ligne" className="btn btn-primary">Nouvelle recherche</Link>
+              <button type="button" onClick={quitAfterMatch} className="btn btn-ghost">Accueil</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {result && !rematchWaiting && (
         <GameResultModal
           result={result}
           gameName={`${gameName} en ligne`}
+          modeLabel={modeLabel}
           onNewGame={requestRematch}
           onQuit={quitAfterMatch}
           description={resultDescription}
           pointsMessage={pointsMessage}
+          pointsChange={mode === "MONEY" ? 0 : pointsChange}
           pointsBalance={match.pointsBalance}
           pointsOpponentName={match.opponentUsername}
-          pointsOpponentChange={
-            match.opponentPointsChange ??
-            (pointsChange === null ? null : -pointsChange)
-          }
+          pointsOpponentChange={mode === "MONEY" ? 0 : match.opponentPointsChange}
           pointsOpponentBalance={match.opponentPointsBalance}
+          showElo={mode === "RATED" || (match.eloChange ?? 0) !== 0}
+          eloChange={match.eloChange}
+          eloBalance={match.eloBalance}
+          eloOpponentChange={match.opponentEloChange}
+          eloOpponentBalance={match.opponentEloBalance}
+          moneyChange={mode === "MONEY" ? match.moneyChange ?? 0 : null}
+          moneyCommission={match.moneyCommission}
           actionError={error}
         />
       )}
     </div>
   );
+}
+
+function formatClock(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function formatCfa(value: number): string {
+  return `${new Intl.NumberFormat("fr-FR").format(value)} FCFA`;
 }

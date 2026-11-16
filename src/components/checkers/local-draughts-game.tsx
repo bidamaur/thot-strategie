@@ -241,7 +241,7 @@ export function LocalDraughtsGame({
 
   const boardSize = position.board.length;
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#080d0b] text-[#f3f5ef]">
+    <main className="relative min-h-screen overflow-hidden bg-canvas text-ink">
       <div className="pointer-events-none absolute -left-40 top-[-18rem] h-[38rem] w-[38rem] rounded-full bg-emerald-500/10 blur-[130px]" />
       <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 pb-10 sm:px-8">
         <header className="flex items-center justify-between border-b border-white/10 py-5">
@@ -362,7 +362,7 @@ export function LocalDraughtsGame({
                         }}
                         className={[
                           "relative flex aspect-square items-center justify-center focus:z-10 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-emerald-300",
-                          playable ? "bg-[#617d69]" : "bg-[#d9dfc8]",
+                          playable ? "bg-board-dark" : "bg-board-light",
                           playable && isHumanTurn ? "cursor-grab active:cursor-grabbing" : "",
                           selected ? "ring-4 ring-inset ring-emerald-300" : "",
                           isLastMove ? "after:absolute after:inset-0 after:bg-amber-300/25" : "",
@@ -381,14 +381,14 @@ export function LocalDraughtsGame({
                             className={`relative z-[2] flex size-[76%] items-center justify-center rounded-full border-[3px] shadow-lg sm:border-4 ${
                               piece.color === "w"
                                 ? "border-[#eef0dc] bg-[#f7f5e9] shadow-black/25"
-                                : "border-[#252d28] bg-[#202722] shadow-black/55"
+                                : "border-line bg-surface-3 shadow-black/55"
                             }`}
                           >
                             {piece.king && (
                               <Crown
                                 className={
                                   piece.color === "w"
-                                    ? "size-1/2 text-[#617d69]"
+                                    ? "size-1/2 text-board-dark"
                                     : "size-1/2 text-amber-200"
                                 }
                               />
@@ -522,7 +522,7 @@ export function LocalDraughtsGame({
           aria-hidden="true"
           className={`pointer-events-none fixed z-50 flex size-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-4 text-3xl shadow-2xl ${
             drag.piece === "●"
-              ? "border-[#eef0dc] bg-[#f7f5e9] text-[#617d69]"
+              ? "border-[#eef0dc] bg-[#f7f5e9] text-board-dark"
               : "border-[#eef0dc] bg-[#f7f5e9] text-amber-500"
           }`}
           style={{ left: drag.x, top: drag.y }}

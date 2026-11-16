@@ -100,6 +100,13 @@ export function TournamentsClient() {
   const [tournamentName, setTournamentName] = useState("");
   const [tournamentType, setTournamentType] = useState("SURVIVAL_BANK");
   const [tournamentScope, setTournamentScope] = useState("CITY");
+  const [visibility, setVisibility] = useState<"PUBLIC" | "PRIVATE">("PUBLIC");
+  const [clubIdParam, setClubIdParam] = useState<string | null>(null);
+  useEffect(() => {
+    // Tournoi de club : /tournois?club=<id> depuis la page du club.
+    const club = new URLSearchParams(window.location.search).get("club");
+    if (club) setClubIdParam(club);
+  }, []);
   const [entryPoints, setEntryPoints] = useState("1");
   const [maxPlayers, setMaxPlayers] = useState("4");
   const [city, setCity] = useState("");
@@ -247,6 +254,8 @@ export function TournamentsClient() {
           country: country.trim() || undefined,
           continent: continent.trim() || undefined,
           inviteUserIds: selectedInviteIds,
+          visibility: clubIdParam ? "CLUB" : visibility,
+          clubId: clubIdParam ?? undefined,
         }),
       });
       await responseJson<{ tournament: { id: string } }>(createResponse);
@@ -425,21 +434,9 @@ export function TournamentsClient() {
   }
 
   return (
-    <main className="min-h-screen bg-[#080d0b] px-5 py-8 text-[#f3f5ef] sm:px-8">
+    <main className="flex-1 px-4 py-6 text-ink sm:px-8 sm:py-8">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-7">
-        <header className="flex items-center justify-between border-b border-white/10 pb-5">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-2 text-sm text-white/60 transition hover:text-white"
-          >
-            <ArrowLeft size={17} />
-            Tableau de bord
-          </Link>
-          <span className="flex items-center gap-2 text-sm font-semibold tracking-wide text-amber-100">
-            <Trophy size={18} />
-            TOURNOIS
-          </span>
-        </header>
+        
 
         <section>
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-amber-100/70">
@@ -490,7 +487,7 @@ export function TournamentsClient() {
                 type="button"
                 onClick={() => void activatePremium()}
                 disabled={busy !== ""}
-                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-amber-100 px-5 py-3 font-semibold text-[#1b1608] transition hover:bg-amber-50 disabled:opacity-50"
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-amber-100 px-5 py-3 font-semibold text-accent-ink transition hover:bg-amber-50 disabled:opacity-50"
               >
                 {busy === "premium" ? (
                   <LoaderCircle className="animate-spin" size={18} />
@@ -503,12 +500,20 @@ export function TournamentsClient() {
           </section>
         )}
 
-        {currentUser?.isAdmin && (
+        {currentUser && (
           <section className="rounded-3xl border border-emerald-200/20 bg-emerald-200/[0.04] p-5 sm:p-7">
             <div className="flex items-center gap-2 text-emerald-100">
               <Crown size={20} />
-              <h2 className="text-lg font-semibold">Créer un tournoi gratuit</h2>
+              <h2 className="text-lg font-semibold">
+                Organiser un tournoi en points classiques
+                {clubIdParam ? " · tournoi de club" : ""}
+              </h2>
             </div>
+            <p className="mt-2 text-xs text-white/45">
+              Le Survival est ouvert à tous les joueurs disposant du minimum de points fixé par
+              l’administration ; les autres formats, les tournois privés et les portées étendues
+              dépendent de votre niveau <a href="/premium" className="underline">Premium</a>.
+            </p>
             <p className="mt-2 text-sm leading-6 text-white/55">
               {tournamentType === "SURVIVAL_BANK"
                 ? "Le droit d’entrée est débité des points gratuits et conservé dans le portefeuille du tournoi. Le solde restant est restitué à la fin ; les gains et pertes de match restent dans ce portefeuille."
@@ -530,10 +535,23 @@ export function TournamentsClient() {
                 <select
                   value={tournamentType}
                   onChange={(event) => setTournamentType(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-[#111814] px-3 py-2 text-white"
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
                 >
                   <option value="SURVIVAL_BANK">Survival Bank</option>
                   <option value="ELIMINATION">Élimination directe</option>
+                </select>
+              </label>
+              <label className="text-sm text-white/70">
+                Visibilité
+                <select
+                  value={clubIdParam ? "CLUB" : visibility}
+                  disabled={Boolean(clubIdParam)}
+                  onChange={(event) => setVisibility(event.target.value as "PUBLIC" | "PRIVATE")}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
+                >
+                  <option value="PUBLIC">Public</option>
+                  <option value="PRIVATE">Privé (sur invitation)</option>
+                  {clubIdParam && <option value="CLUB">Membres du club</option>}
                 </select>
               </label>
               <label className="text-sm text-white/70">
@@ -541,7 +559,7 @@ export function TournamentsClient() {
                 <select
                   value={tournamentScope}
                   onChange={(event) => setTournamentScope(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-[#111814] px-3 py-2 text-white"
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
                 >
                   <option value="NEIGHBORHOOD">Quartier</option>
                   <option value="CITY">Ville</option>
@@ -568,7 +586,7 @@ export function TournamentsClient() {
                 <select
                   value={maxPlayers}
                   onChange={(event) => setMaxPlayers(event.target.value)}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-[#111814] px-3 py-2 text-white"
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
                 >
                   {[4, 8, 16, 32, 64].map((count) => (
                     <option key={count} value={count}>{count}</option>
@@ -665,7 +683,7 @@ export function TournamentsClient() {
                 busy !== "" ||
                 selectedInviteIds.length > Number(maxPlayers) - 1
               }
-              className="mt-5 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-300 px-5 py-3 font-semibold text-[#07100c] transition hover:bg-emerald-200 disabled:opacity-50"
+              className="mt-5 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-300 px-5 py-3 font-semibold text-accent-ink transition hover:bg-emerald-200 disabled:opacity-50"
             >
               {busy === "create" ? (
                 <LoaderCircle className="animate-spin" size={18} />
@@ -792,7 +810,7 @@ export function TournamentsClient() {
                               invitationId: invitation.id,
                             })}
                             disabled={busy !== ""}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-[#07100c] disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-300 px-3 py-2 text-sm font-semibold text-accent-ink disabled:opacity-50"
                           >
                             {busy === invitation.id ? (
                               <LoaderCircle className="animate-spin" size={15} />
@@ -869,7 +887,7 @@ export function TournamentsClient() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="tournament-eligibility-title"
-            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-[#111814] p-6 shadow-2xl"
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-surface-2 p-6 shadow-2xl"
           >
             <h2 id="tournament-eligibility-title" className="text-xl font-semibold">
               Conditions de participation
@@ -957,7 +975,7 @@ export function TournamentsClient() {
                 type="button"
                 onClick={confirmTournamentAction}
                 disabled={busy !== "" || getJoinRestrictions(tournamentAction.tournament).length > 0}
-                className="rounded-lg bg-emerald-300 px-4 py-2 text-sm font-semibold text-[#07100c] disabled:opacity-50"
+                className="rounded-lg bg-emerald-300 px-4 py-2 text-sm font-semibold text-accent-ink disabled:opacity-50"
               >
                 {busy ? "Traitement…" : tournamentAction.intent === "accept" ? "Accepter l’invitation" : "Confirmer l’inscription"}
               </button>

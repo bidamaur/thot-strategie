@@ -90,7 +90,7 @@ export function ActiveMatchBanner() {
     return (
       <div
         role="status"
-        className="fixed inset-x-3 bottom-3 z-[90] mx-auto max-w-xl rounded-2xl border border-amber-300/30 bg-[#171b15] px-4 py-3 text-center text-sm text-amber-100 shadow-xl"
+        className="fixed inset-x-3 bottom-3 z-[90] mx-auto max-w-xl rounded-2xl border border-amber-300/30 bg-surface-2 px-4 py-3 text-center text-sm text-amber-100 shadow-xl"
       >
         Impossible de vérifier si vous avez une partie en cours.
       </div>
@@ -108,10 +108,12 @@ export function ActiveMatchBanner() {
           match.gracePeriodMs - (Math.max(now, disconnectedAt) - disconnectedAt),
         );
 
+  if (remainingMs === 0) return null;
+
   return (
     <aside
       role="status"
-      className="fixed inset-x-3 bottom-3 z-[90] mx-auto flex max-w-3xl flex-col gap-3 rounded-2xl border border-emerald-300/30 bg-[#101713]/[.98] p-3 text-white shadow-2xl backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-5"
+      className="fixed inset-x-3 bottom-3 z-[90] mx-auto flex max-w-3xl flex-col gap-3 rounded-2xl border border-emerald-300/30 bg-surface/[.98] p-3 text-white shadow-2xl backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:px-5"
     >
       <div className="flex min-w-0 items-start gap-3">
         <Swords className="mt-0.5 size-5 shrink-0 text-emerald-300" />

@@ -19,7 +19,7 @@ export default async function ChessGamePage({
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-[#080d0b] p-8 text-white/60">
+        <main className="min-h-screen bg-canvas p-8 text-white/60">
           Préparation de l’échiquier…
         </main>
       }

@@ -32,7 +32,9 @@ import {
   ChevronLeft,
   Menu,
   X,
+  ScrollText,
 } from "lucide-react";
+import { AdminAuditView, AdminSettingsPanel } from "./admin-settings-panel";
 
 interface AdminUser {
   id: string;
@@ -43,6 +45,8 @@ interface AdminUser {
   premiumLevel: number;
   pointsFree: number;
   walletReal: string;
+  walletLocked?: string;
+  moneyVerified?: boolean;
   elo: number;
   country: string | null;
   city: string | null;
@@ -81,7 +85,7 @@ interface AdminConfig {
   updatedAt: string;
 }
 
-type View = "dashboard" | "users" | "tournaments" | "config";
+type View = "dashboard" | "users" | "tournaments" | "config" | "audit";
 
 export default function AdminDashboard({ adminUser }: { adminUser: any }) {
   const [view, setView] = useState<View>("dashboard");
@@ -160,13 +164,14 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
     { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
     { id: "users", label: "Utilisateurs", icon: Users },
     { id: "tournaments", label: "Tournois", icon: Trophy },
-    { id: "config", label: "Configuration", icon: Settings },
+    { id: "config", label: "Paramètres", icon: Settings },
+    { id: "audit", label: "Journal d’audit", icon: ScrollText },
   ];
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
+    <div className="min-h-screen bg-canvas text-white flex flex-col">
       {/* Top Bar */}
-      <header className="h-16 bg-[#111111] border-b border-[#222222] flex items-center justify-between px-6 z-20">
+      <header className="h-16 bg-surface border-b border-line flex items-center justify-between px-6 z-20">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-gradient-to-br from-yellow-500 to-orange-600 rounded flex items-center justify-center font-bold text-black text-sm">
@@ -179,7 +184,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="hidden md:flex items-center gap-3 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#333333]">
+          <div className="hidden md:flex items-center gap-3 px-4 py-2 rounded-lg bg-surface-2 border border-line-strong">
             <span className="text-xs text-zinc-400">Connecté en tant que</span>
             <span className="text-sm font-medium text-white">{adminUser.username}</span>
             <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-green-900/30 border border-green-500/30 text-green-400 text-xs">
@@ -192,7 +197,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
                 window.location.href = "/";
               });
             }}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-[#222222] transition text-zinc-300"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-surface-3 transition text-zinc-300"
           >
             <LogOut className="w-4 h-4" /> <span className="text-sm">Déconnexion</span>
           </button>
@@ -202,7 +207,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
-        <aside className="w-64 bg-[#111111] border-r border-[#222222] flex flex-col hidden md:block">
+        <aside className="w-64 bg-surface border-r border-line flex flex-col hidden md:block">
           <nav className="flex-1 py-6 space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -214,7 +219,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
                   className={`flex items-center gap-3 px-6 py-3 text-sm font-medium transition-all ${
                     isActive
                       ? "bg-yellow-500 text-black"
-                      : "text-zinc-400 hover:bg-[#1a1a1a] hover:text-white"
+                      : "text-zinc-400 hover:bg-surface-2 hover:text-white"
                   }`}
                 >
                   <Icon className="w-5 h-5" />
@@ -223,7 +228,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
               );
             })}
           </nav>
-          <div className="p-6 border-t border-[#222222]">
+          <div className="p-6 border-t border-line">
             <div className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-3">
               Système
             </div>
@@ -233,7 +238,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
                   window.location.href = "/";
                 });
               }}
-              className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-[#222222] transition text-zinc-300 text-sm"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface-3 transition text-zinc-300 text-sm"
             >
               <LogOut className="w-4 h-4" /> Déconnexion
             </button>
@@ -244,7 +249,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
         <div className="md:hidden">
           <button
             type="button"
-            className="p-3 text-zinc-400 hover:text-white hover:bg-[#222222] rounded"
+            className="p-3 text-zinc-400 hover:text-white hover:bg-surface-3 rounded"
             aria-label={mobileMenuOpen ? "Fermer le menu" : "Ouvrir le menu"}
             aria-expanded={mobileMenuOpen}
             aria-controls="admin-mobile-navigation"
@@ -255,7 +260,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
           {mobileMenuOpen && (
             <nav
               id="admin-mobile-navigation"
-              className="fixed left-0 right-0 top-16 z-30 border-b border-[#222222] bg-[#111111] py-2 shadow-lg"
+              className="fixed left-0 right-0 top-16 z-30 border-b border-line bg-surface py-2 shadow-lg"
             >
               {navItems.map((item) => {
                 const Icon = item.icon;
@@ -270,7 +275,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
                     className={`flex w-full items-center gap-3 px-6 py-3 text-left text-sm font-medium ${
                       view === item.id
                         ? "bg-yellow-500 text-black"
-                        : "text-zinc-400 hover:bg-[#1a1a1a] hover:text-white"
+                        : "text-zinc-400 hover:bg-surface-2 hover:text-white"
                     }`}
                   >
                     <Icon className="w-5 h-5" />
@@ -283,7 +288,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
         </div>
 
         {/* Content */}
-        <main className="flex-1 p-8 overflow-y-auto bg-[#0a0a0a]">
+        <main className="min-w-0 flex-1 overflow-y-auto bg-canvas p-4 sm:p-6 lg:p-8">
           {view === "dashboard" && (
             <AdminDashboardView
               stats={stats}
@@ -315,7 +320,12 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
               formatDate={formatDate}
             />
           )}
+          {view === "audit" && <AdminAuditView />}
+          {view === "config" && <AdminSettingsPanel />}
           {view === "config" && (
+            <details className="mt-10">
+              <summary className="cursor-pointer text-sm text-ink-muted">Clés avancées (JSON brut, usage expert)</summary>
+              <div className="mt-4">
             <AdminConfigView
               configs={configs}
               error={error}
@@ -325,6 +335,8 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
               configValue={configValue}
               setConfigValue={setConfigValue}
             />
+              </div>
+            </details>
           )}
         </main>
       </div>
@@ -365,7 +377,7 @@ function AdminDashboardView({
         </div>
         <button
           onClick={loadData}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#333333] hover:bg-[#222222] transition text-sm"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-2 border border-line-strong hover:bg-surface-3 transition text-sm"
         >
           <RefreshCw className="w-4 h-4" /> Actualiser
         </button>
@@ -404,7 +416,7 @@ function AdminDashboardView({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-[#111111] border border-[#222222] rounded-xl p-6">
+        <div className="bg-surface border border-line rounded-xl p-6">
           <h3 className="text-sm font-semibold text-zinc-300 mb-4 flex items-center gap-2">
             <Activity className="w-4 h-4" /> Activité récente
           </h3>
@@ -430,7 +442,7 @@ function AdminDashboardView({
           </div>
         </div>
 
-        <div className="bg-[#111111] border border-[#222222] rounded-xl p-6">
+        <div className="bg-surface border border-line rounded-xl p-6">
           <h3 className="text-sm font-semibold text-zinc-300 mb-4 flex items-center gap-2">
             <BarChart3 className="w-4 h-4" /> Répartition rapide
           </h3>
@@ -565,13 +577,13 @@ function AdminUsersView({
             placeholder="Rechercher un utilisateur..."
             value={searchUsers}
             onChange={(e) => setSearchUsers(e.target.value)}
-            className="w-full bg-[#111111] border border-[#333333] rounded-lg px-4 pl-10 py-2 text-white focus:outline-none focus:border-yellow-500 transition"
+            className="w-full bg-surface border border-line-strong rounded-lg px-4 pl-10 py-2 text-white focus:outline-none focus:border-yellow-500 transition"
           />
         </div>
         <select
           value={filterRole}
           onChange={(e) => setFilterRole(e.target.value)}
-          className="bg-[#111111] border border-[#333333] rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500 transition"
+          className="bg-surface border border-line-strong rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500 transition"
         >
           <option value="all">Tous les rôles</option>
           <option value="admin">Administrateurs</option>
@@ -581,9 +593,9 @@ function AdminUsersView({
       </div>
 
       {/* Users Table */}
-      <div className="bg-[#111111] border border-[#222222] rounded-xl overflow-hidden">
+      <div className="bg-surface border border-line rounded-xl overflow-hidden">
         <table className="w-full text-left">
-          <thead className="bg-[#1a1a1a] border-b border-[#222222]">
+          <thead className="bg-surface-2 border-b border-line">
             <tr>
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase">Utilisateur</th>
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase">Rôle</th>
@@ -594,15 +606,15 @@ function AdminUsersView({
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#222222]">
+          <tbody className="divide-y divide-line">
             {users.map((user) => (
-              <tr key={user.id} className="hover:bg-[#1a1a1a]/50 transition">
+              <tr key={user.id} className="hover:bg-surface-2/50 transition">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
                     {user.avatar ? (
                       <img src={user.avatar} alt="" className="w-8 h-8 rounded-full" />
                     ) : (
-                      <div className="w-8 h-8 rounded-full bg-[#333333] flex items-center justify-center text-xs font-bold">
+                      <div className="w-8 h-8 rounded-full bg-surface-3 flex items-center justify-center text-xs font-bold">
                         {user.username.charAt(0).toUpperCase()}
                       </div>
                     )}
@@ -626,7 +638,7 @@ function AdminUsersView({
                       <Crown className="w-3 h-3" /> Premium {user.premiumLevel}
                     </span>
                   ) : (
-                    <span className="px-2 py-1 rounded bg-[#222222] border border-[#333333] text-zinc-400 text-xs font-medium">
+                    <span className="px-2 py-1 rounded bg-surface-3 border border-line-strong text-zinc-400 text-xs font-medium">
                       Utilisateur
                     </span>
                   )}
@@ -640,7 +652,7 @@ function AdminUsersView({
                 <td className="px-4 py-3 text-right">
                   <button
                     onClick={() => onEditUser(user)}
-                    className="flex items-center gap-1 px-2 py-1 rounded bg-[#1a1a1a] border border-[#333333] hover:bg-[#222222] transition text-xs text-zinc-300"
+                    className="flex items-center gap-1 px-2 py-1 rounded bg-surface-2 border border-line-strong hover:bg-surface-3 transition text-xs text-zinc-300"
                   >
                     <Edit className="w-3 h-3" /> Modifier
                   </button>
@@ -693,9 +705,9 @@ function AdminTournamentsView({
         </div>
       )}
 
-      <div className="bg-[#111111] border border-[#222222] rounded-xl overflow-hidden">
+      <div className="bg-surface border border-line rounded-xl overflow-hidden">
         <table className="w-full text-left">
-          <thead className="bg-[#1a1a1a] border-b border-[#222222]">
+          <thead className="bg-surface-2 border-b border-line">
             <tr>
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase">Tournoi</th>
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase">Type</th>
@@ -705,7 +717,7 @@ function AdminTournamentsView({
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase">Créé le</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#222222]">
+          <tbody className="divide-y divide-line">
             {tournaments.length === 0 && (
               <tr>
                 <td
@@ -717,7 +729,7 @@ function AdminTournamentsView({
               </tr>
             )}
             {tournaments.map((t) => (
-              <tr key={t.id} className="hover:bg-[#1a1a1a]/50 transition">
+              <tr key={t.id} className="hover:bg-surface-2/50 transition">
                 <td className="px-4 py-3">
                   <div>
                     <p className="text-sm font-medium text-white">{t.name}</p>
@@ -795,9 +807,9 @@ function AdminConfigView({
         <p className="text-sm text-zinc-400">Aucune configuration disponible.</p>
       )}
 
-      <div className="bg-[#111111] border border-[#222222] rounded-xl overflow-hidden">
+      <div className="bg-surface border border-line rounded-xl overflow-hidden">
         <table className="w-full text-left">
-          <thead className="bg-[#1a1a1a] border-b border-[#222222]">
+          <thead className="bg-surface-2 border-b border-line">
             <tr>
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase">Paramètre</th>
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase">Valeur</th>
@@ -805,9 +817,9 @@ function AdminConfigView({
               <th className="px-4 py-3 text-xs font-semibold text-zinc-400 uppercase text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#222222]">
+          <tbody className="divide-y divide-line">
             {configs.map((c) => (
-              <tr key={c.key} className="hover:bg-[#1a1a1a]/50 transition">
+              <tr key={c.key} className="hover:bg-surface-2/50 transition">
                 <td className="px-4 py-3">
                   <p className="text-sm font-medium text-white">{c.key}</p>
                   <p className="text-xs text-zinc-500">{c.isEditable ? "Modifiable" : "Verrouillé"}</p>
@@ -818,7 +830,7 @@ function AdminConfigView({
                       type="text"
                       value={configValue}
                       onChange={(e) => setConfigValue(e.target.value)}
-                      className="w-full bg-[#1a1a1a] border border-[#333333] rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
+                      className="w-full bg-surface-2 border border-line-strong rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
                     />
                   ) : (
                     <div className="text-sm font-mono text-zinc-300 truncate max-w-xs">
@@ -834,7 +846,7 @@ function AdminConfigView({
                         setEditingConfig(c);
                         setConfigValue(typeof c.value === "string" ? c.value : JSON.stringify(c.value));
                       }}
-                      className="flex items-center gap-1 px-2 py-1 rounded bg-[#1a1a1a] border border-[#333333] hover:bg-[#222222] transition text-xs text-zinc-300"
+                      className="flex items-center gap-1 px-2 py-1 rounded bg-surface-2 border border-line-strong hover:bg-surface-3 transition text-xs text-zinc-300"
                     >
                       <Edit className="w-3 h-3" />
                     </button>
@@ -847,7 +859,7 @@ function AdminConfigView({
       </div>
 
       {editingConfig && (
-        <div className="mt-4 p-4 rounded-lg bg-[#1a1a1a] border border-[#333333]">
+        <div className="mt-4 p-4 rounded-lg bg-surface-2 border border-line-strong">
           <h3 className="text-sm font-semibold text-white mb-3">Modifier {editingConfig.key}</h3>
           <div className="flex gap-3">
             <button
@@ -873,7 +885,7 @@ function AdminConfigView({
             </button>
             <button
               onClick={() => setEditingConfig(null)}
-              className="px-4 py-2 rounded bg-[#222222] border border-[#333333] hover:bg-[#333333] transition text-sm text-zinc-300"
+              className="px-4 py-2 rounded bg-surface-3 border border-line-strong hover:bg-surface-3 transition text-sm text-zinc-300"
             >
               Annuler
             </button>
@@ -899,8 +911,13 @@ function AdminUserEditModal({
   const [premiumLevel, setPremiumLevel] = useState(user.premiumLevel ?? 0);
   const [pointsFree, setPointsFree] = useState(String(user.pointsFree));
   const [elo, setElo] = useState(String(user.elo));
+  const [walletReal, setWalletReal] = useState(String(user.walletReal));
+  const [moneyVerified, setMoneyVerified] = useState(Boolean(user.moneyVerified));
+  const [reason, setReason] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   const handleSave = async () => {
+    setSaveError("");
     const res = await fetch(`/api/admin/users/${user.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -909,18 +926,24 @@ function AdminUserEditModal({
         isPremium,
         premiumLevel,
         pointsFree: Number(pointsFree),
+        walletReal: Number(walletReal),
+        moneyVerified,
         elo: Number(elo),
+        reason: reason.trim() || undefined,
       }),
     });
     if (res.ok) {
       onClose();
       onSave();
+    } else {
+      const json = await res.json().catch(() => ({}));
+      setSaveError(json.error ?? "Enregistrement impossible.");
     }
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[#111111] border border-[#333333] rounded-xl p-6 max-w-md w-full">
+      <div className="bg-surface border border-line-strong rounded-xl p-6 max-w-md w-full max-h-[90dvh] overflow-y-auto">
         <h2 className="text-lg font-bold text-white mb-4">Modifier {user.username}</h2>
         <div className="space-y-3">
           <label className="text-xs text-zinc-400 uppercase">Administrateur</label>
@@ -928,7 +951,7 @@ function AdminUserEditModal({
             type="checkbox"
             checked={isAdmin}
             onChange={(e) => setIsAdmin(e.target.checked)}
-            className="rounded bg-[#1a1a1a] border-[#333333] text-yellow-500 focus:ring-yellow-500"
+            className="rounded bg-surface-2 border-line-strong text-yellow-500 focus:ring-yellow-500"
           />
         </div>
         <div className="space-y-3">
@@ -937,7 +960,7 @@ function AdminUserEditModal({
             type="checkbox"
             checked={isPremium}
             onChange={(e) => setIsPremium(e.target.checked)}
-            className="rounded bg-[#1a1a1a] border-[#333333] text-yellow-500 focus:ring-yellow-500"
+            className="rounded bg-surface-2 border-line-strong text-yellow-500 focus:ring-yellow-500"
           />
         </div>
         {isPremium && (
@@ -946,7 +969,7 @@ function AdminUserEditModal({
             <select
               value={premiumLevel}
               onChange={(e) => setPremiumLevel(Number(e.target.value))}
-              className="w-full bg-[#1a1a1a] border border-[#333333] rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
+              className="w-full bg-surface-2 border border-line-strong rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
             >
               {[1, 2, 3, 4, 5].map((l) => (
                 <option key={l} value={l}>Niveau {l}</option>
@@ -960,7 +983,7 @@ function AdminUserEditModal({
             type="number"
             value={pointsFree}
             onChange={(e) => setPointsFree(e.target.value)}
-            className="w-full bg-[#1a1a1a] border border-[#333333] rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
+            className="w-full bg-surface-2 border border-line-strong rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
           />
         </div>
         <div className="space-y-3">
@@ -969,14 +992,42 @@ function AdminUserEditModal({
             type="number"
             value={elo}
             onChange={(e) => setElo(e.target.value)}
-            className="w-full bg-[#1a1a1a] border border-[#333333] rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
+            className="w-full bg-surface-2 border border-line-strong rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
           />
         </div>
+        <div className="space-y-3">
+          <label className="text-xs text-zinc-400 uppercase">Points argent disponibles (FCFA)</label>
+          <input
+            type="number"
+            min={0}
+            value={walletReal}
+            onChange={(e) => setWalletReal(e.target.value)}
+            className="w-full bg-surface-2 border border-line-strong rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
+          />
+          {user.walletLocked && Number(user.walletLocked) > 0 && (
+            <p className="text-xs text-zinc-500">{user.walletLocked} FCFA bloqués en partie (non modifiables).</p>
+          )}
+        </div>
+        <label className="mt-3 flex items-center gap-2 text-sm text-zinc-300">
+          <input type="checkbox" checked={moneyVerified} onChange={(e) => setMoneyVerified(e.target.checked)} />
+          Compte vérifié pour les parties rémunérées
+        </label>
+        <div className="mt-3 space-y-2">
+          <label className="text-xs text-zinc-400 uppercase">Motif (journal d’audit)</label>
+          <input
+            value={reason}
+            maxLength={200}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Ex. correction après litige"
+            className="w-full bg-surface-2 border border-line-strong rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-yellow-500"
+          />
+        </div>
+        {saveError && <p className="mt-3 text-sm text-danger">{saveError}</p>}
         <div className="flex gap-3 pt-4">
           <button onClick={handleSave} className="flex-1 px-4 py-2 rounded bg-yellow-500 text-black hover:bg-yellow-400 transition text-sm font-medium">
             Enregistrer
           </button>
-          <button onClick={onClose} className="px-4 py-2 rounded bg-[#222222] border border-[#333333] hover:bg-[#333333] transition text-sm text-zinc-300">
+          <button onClick={onClose} className="px-4 py-2 rounded bg-surface-3 border border-line-strong hover:bg-surface-3 transition text-sm text-zinc-300">
             Annuler
           </button>
         </div>

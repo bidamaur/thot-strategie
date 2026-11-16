@@ -1,0 +1,165 @@
+"use client";
+
+import { ArrowLeft, Crown, Shield, Trophy, UserMinus } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { EmptyState, PageShell } from "@/components/ui/page-header";
+
+interface ClubDetail {
+  club: {
+    id: string;
+    name: string;
+    description: string | null;
+    city: string | null;
+    country: string | null;
+    accentColor: string | null;
+    maxMembers: number;
+    owner: { id: string; username: string };
+    members: { role: "OWNER" | "ADMIN" | "MEMBER"; joinedAt: string; user: { id: string; username: string; elo: number } }[];
+    tournaments: { id: string; name: string; status: string; type: string; maxPlayers: number; _count: { participants: number } }[];
+  };
+  ranking: { position: number; userId: string; username: string; elo: number }[];
+  myRole: "OWNER" | "ADMIN" | "MEMBER" | null;
+}
+
+const STATUS_LABELS: Record<string, string> = { OPEN: "Inscriptions", IN_PROGRESS: "En cours", COMPLETED: "Terminé", DRAFT: "Brouillon" };
+
+export function ClubDetailClient({ slug }: { slug: string }) {
+  const [data, setData] = useState<ClubDetail | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    fetch(`/api/clubs/${encodeURIComponent(slug)}`, { cache: "no-store" })
+      .then(async (r) => {
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error ?? "Club introuvable.");
+        setData(json);
+      })
+      .catch((caught: Error) => setError(caught.message));
+  }, [slug]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function act(body: Record<string, string>) {
+    setBusy(true);
+    setError("");
+    const response = await fetch(`/api/clubs/${encodeURIComponent(slug)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await response.json().catch(() => ({}));
+    setBusy(false);
+    if (!response.ok) setError(json.error ?? "Action impossible.");
+    load();
+  }
+
+  if (!data) {
+    return (
+      <PageShell width="max-w-5xl">
+        {error ? <EmptyState title={error}><Link href="/clubs" className="text-accent underline">Retour aux clubs</Link></EmptyState> : <div className="card h-48 animate-pulse" />}
+      </PageShell>
+    );
+  }
+
+  const { club, ranking, myRole } = data;
+  const isManager = myRole === "OWNER" || myRole === "ADMIN";
+
+  return (
+    <PageShell width="max-w-5xl">
+      <Link href="/clubs" className="inline-flex w-fit items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
+        <ArrowLeft className="size-4" /> Clubs
+      </Link>
+
+      <header className="card overflow-hidden">
+        <div className="h-20" style={{ background: `linear-gradient(120deg, ${club.accentColor ?? "var(--accent)"}55, transparent)` }} />
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">{club.name}</h1>
+            <p className="mt-1 text-sm text-ink-muted">
+              Fondé par {club.owner.username}
+              {(club.city || club.country) && ` · ${[club.city, club.country].filter(Boolean).join(", ")}`}
+              {` · ${club.members.length}/${club.maxMembers} membres`}
+            </p>
+            {club.description && <p className="mt-3 max-w-2xl text-sm text-ink-soft">{club.description}</p>}
+          </div>
+          <div className="flex gap-2">
+            {myRole === null && (
+              <button type="button" disabled={busy} onClick={() => act({ action: "join" })} className="btn btn-primary">Rejoindre</button>
+            )}
+            {myRole && myRole !== "OWNER" && (
+              <button type="button" disabled={busy} onClick={() => act({ action: "leave" })} className="btn btn-ghost">Quitter</button>
+            )}
+            {isManager && (
+              <Link href={`/tournois?club=${club.id}`} className="btn btn-primary">
+                <Trophy className="size-4" /> Organiser un tournoi
+              </Link>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {error && <p className="text-sm text-danger">{error}</p>}
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <section className="card p-5">
+          <h2 className="text-base font-semibold">Classement interne</h2>
+          <ol className="mt-3 divide-y divide-line">
+            {ranking.map((row) => {
+              const member = club.members.find((m) => m.user.id === row.userId);
+              return (
+                <li key={row.userId} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="tabular w-6 text-ink-muted">{row.position}</span>
+                    <span className="truncate font-medium">{row.username}</span>
+                    {member?.role === "OWNER" && <Crown className="size-3.5 shrink-0 text-gold" aria-label="Fondateur" />}
+                    {member?.role === "ADMIN" && <Shield className="size-3.5 shrink-0 text-accent" aria-label="Responsable" />}
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="tabular font-semibold">{row.elo}</span>
+                    {myRole === "OWNER" && member && member.role !== "OWNER" && (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => act({ action: "setRole", userId: row.userId, role: member.role === "ADMIN" ? "MEMBER" : "ADMIN" })}
+                        className="btn btn-ghost min-h-0 px-2 py-1 text-xs"
+                      >
+                        {member.role === "ADMIN" ? "Retirer resp." : "Nommer resp."}
+                      </button>
+                    )}
+                    {isManager && member && member.role === "MEMBER" && (
+                      <button type="button" disabled={busy} onClick={() => act({ action: "remove", userId: row.userId })} className="rounded-lg p-1 text-ink-muted hover:text-danger" aria-label={`Exclure ${row.username}`}>
+                        <UserMinus className="size-4" />
+                      </button>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+
+        <section className="card p-5">
+          <h2 className="text-base font-semibold">Compétitions du club</h2>
+          {club.tournaments.length === 0 ? (
+            <p className="mt-3 text-sm text-ink-muted">Aucun tournoi pour l’instant.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {club.tournaments.map((t) => (
+                <li key={t.id} className="card-muted px-3 py-2.5">
+                  <p className="truncate text-sm font-medium">{t.name}</p>
+                  <p className="text-xs text-ink-muted">
+                    {STATUS_LABELS[t.status] ?? t.status} · {t._count.participants}/{t.maxPlayers} joueurs
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </PageShell>
+  );
+}

@@ -217,7 +217,7 @@ export function LocalChessGame({
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#080d0b] text-[#f3f5ef]">
+    <main className="relative min-h-screen overflow-hidden bg-canvas text-ink">
       <div className="pointer-events-none absolute -left-40 top-[-18rem] h-[38rem] w-[38rem] rounded-full bg-emerald-500/10 blur-[130px]" />
       <div className="pointer-events-none absolute -right-40 top-80 h-[30rem] w-[30rem] rounded-full bg-amber-400/5 blur-[120px]" />
 
@@ -324,7 +324,7 @@ export function LocalChessGame({
                         }}
                         className={[
                           "relative flex aspect-square touch-none select-none items-center justify-center transition-colors focus:z-10 focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-emerald-300",
-                          isLight ? "bg-[#d9dfc8]" : "bg-[#617d69]",
+                          isLight ? "bg-board-light" : "bg-board-dark",
                           isLastMoveSquare ? "after:absolute after:inset-0 after:bg-amber-300/25" : "",
                           isCheckedKing ? "bg-red-500/75" : "",
                           isSelected ? "ring-4 ring-inset ring-emerald-300" : "",
@@ -351,7 +351,7 @@ export function LocalChessGame({
                               "relative z-[2] select-none text-[clamp(1.7rem,7vw,3.8rem)] leading-none",
                               piece.color === "w"
                                 ? "text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.45)]"
-                                : "text-[#121713] drop-shadow-[0_1px_1px_rgba(255,255,255,0.45)]",
+                                : "text-accent-ink drop-shadow-[0_1px_1px_rgba(255,255,255,0.45)]",
                             ].join(" ")}
                           >
                             {PIECES[piece.color][piece.type]}
@@ -361,7 +361,7 @@ export function LocalChessGame({
                           <span
                             aria-hidden="true"
                             className={`absolute left-1 top-0.5 z-[3] text-[10px] font-semibold sm:left-1.5 sm:top-1 ${
-                              isLight ? "text-[#617d69]" : "text-[#d9dfc8]"
+                              isLight ? "text-board-dark" : "text-board-light"
                             }`}
                           >
                             {8 - row}
@@ -371,7 +371,7 @@ export function LocalChessGame({
                           <span
                             aria-hidden="true"
                             className={`absolute bottom-0 right-1 z-[3] text-[10px] font-semibold sm:right-1.5 ${
-                              isLight ? "text-[#617d69]" : "text-[#d9dfc8]"
+                              isLight ? "text-board-dark" : "text-board-light"
                             }`}
                           >
                             {file}
