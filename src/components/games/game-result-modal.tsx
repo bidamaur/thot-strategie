@@ -25,6 +25,7 @@ interface GameResultModalProps {
   moneyChange?: number | null;
   moneyCommission?: number | null;
   modeLabel?: string;
+  newGameLabel?: string;
 }
 
 const CONFETTI_COLORS = ["#6ee7b7", "#fcd34d", "#f9a8d4", "#93c5fd", "#f5f5f4"];
@@ -51,6 +52,7 @@ export function GameResultModal({
   moneyChange,
   moneyCommission,
   modeLabel,
+  newGameLabel = "Nouvelle partie",
 }: GameResultModalProps) {
   const won = result === "win";
   const drawn = result === "draw";
@@ -274,7 +276,7 @@ export function GameResultModal({
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-300 px-5 py-3 text-sm font-semibold text-accent-ink transition hover:bg-emerald-200"
           >
             <RotateCcw size={16} />
-            Nouvelle partie
+            {newGameLabel}
           </button>
           {onQuit && (
             <button

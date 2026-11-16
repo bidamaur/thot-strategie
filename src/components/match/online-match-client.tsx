@@ -62,6 +62,7 @@ interface MatchState {
   stakeAmount?: number | null;
   timeControlMinutes?: number | null;
   chatEnabled?: boolean;
+  tournamentId?: string | null;
   moneyChange?: number | null;
   moneyCommission?: number | null;
   pointsChange?: number | null;
@@ -1138,6 +1139,11 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               {modeLabel}
               {mode === "MONEY" && match.stakeAmount ? ` · ${formatCfa(match.stakeAmount)}` : ""}
             </span>
+            {match.tournamentId && (
+              <Link href={`/tournois/${encodeURIComponent(match.tournamentId)}`} className="chip hover:text-ink">
+                <Trophy className="size-3.5" /> Tournoi
+              </Link>
+            )}
             <span className="flex items-center gap-1.5 text-xs text-ink-muted">
               {socketConnected ? <Wifi className="size-3.5 text-accent" /> : <WifiOff className="size-3.5 text-danger" />}
               {socketConnected ? "Connecté" : "Reconnexion…"}
@@ -1455,7 +1461,12 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
           result={result}
           gameName={`${gameName} en ligne`}
           modeLabel={modeLabel}
-          onNewGame={requestRematch}
+          onNewGame={
+            match.tournamentId
+              ? () => router.push(`/tournois/${encodeURIComponent(match.tournamentId!)}`)
+              : requestRematch
+          }
+          newGameLabel={match.tournamentId ? "Retour au tournoi" : undefined}
           onQuit={quitAfterMatch}
           description={resultDescription}
           pointsMessage={pointsMessage}

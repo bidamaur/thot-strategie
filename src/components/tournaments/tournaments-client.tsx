@@ -534,11 +534,21 @@ export function TournamentsClient() {
                 Format
                 <select
                   value={tournamentType}
-                  onChange={(event) => setTournamentType(event.target.value)}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setTournamentType(next);
+                    // Les formats à élimination exigent une puissance de 2.
+                    if ((next === "ELIMINATION" || next === "SURVIVAL_BANK") && ![4, 8, 16, 32, 64].includes(Number(maxPlayers))) {
+                      setMaxPlayers("4");
+                    }
+                  }}
                   className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
                 >
                   <option value="SURVIVAL_BANK">Survival Bank</option>
                   <option value="ELIMINATION">Élimination directe</option>
+                  <option value="SWISS">Système suisse</option>
+                  <option value="ROUND_ROBIN">Toutes rondes</option>
+                  <option value="LEAGUE">Ligue aller-retour</option>
                 </select>
               </label>
               <label className="text-sm text-white/70">
@@ -588,7 +598,12 @@ export function TournamentsClient() {
                   onChange={(event) => setMaxPlayers(event.target.value)}
                   className="mt-1 w-full rounded-lg border border-white/10 bg-surface-2 px-3 py-2 text-white"
                 >
-                  {[4, 8, 16, 32, 64].map((count) => (
+                  {(tournamentType === "ELIMINATION" || tournamentType === "SURVIVAL_BANK"
+                    ? [4, 8, 16, 32, 64]
+                    : tournamentType === "SWISS"
+                      ? [4, 5, 6, 7, 8, 10, 12, 16, 20, 24, 32, 48, 64]
+                      : [4, 5, 6, 7, 8, 10, 12, 14, 16, 20]
+                  ).map((count) => (
                     <option key={count} value={count}>{count}</option>
                   ))}
                 </select>
@@ -761,7 +776,9 @@ export function TournamentsClient() {
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <h3 className="font-semibold">
-                            {tournament.name || `Tournoi de ${tournament.creator.username}`}
+                            <Link href={`/tournois/${tournament.id}`} className="hover:text-accent hover:underline">
+                              {tournament.name || `Tournoi de ${tournament.creator.username}`}
+                            </Link>
                           </h3>
                           <span className="rounded-full bg-emerald-200/10 px-2.5 py-1 text-xs text-emerald-100">
                             {statusLabel}
