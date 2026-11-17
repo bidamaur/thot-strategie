@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AppExperience } from "@/components/app/app-experience";
 import { ActiveMatchBanner } from "@/components/match/active-match-banner";
 import { SiteNav } from "@/components/layout/site-nav";
 import "./globals.css";
@@ -21,6 +22,20 @@ export const metadata: Metadata = {
   },
   description:
     "Jouez aux dames et aux échecs en ligne : parties classées, tournois, Survival, clubs et classements ELO.",
+  applicationName: "Thot Stratégie",
+  appleWebApp: {
+    capable: true,
+    title: "Thot",
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: { telephone: false },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icons/icon-192.png", type: "image/png", sizes: "192x192" },
+    ],
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
+  },
 };
 
 export const viewport: Viewport = {
@@ -40,6 +55,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <SiteNav />
         {children}
         <ActiveMatchBanner />
+        <AppExperience />
       </body>
     </html>
   );

@@ -65,6 +65,8 @@ model User {
   /// Communauté : types de notifications désactivés par le joueur.
   notificationPrefs         Json?
   lastSeenAt                DateTime?
+  /// État des sollicitations (bienvenue, campagnes, installation) : affichages, refus.
+  engagement                Json                          @default("{}")
   tournamentInvitationsSent TournamentInvitation[]        @relation("TournamentInviter")
   friendshipsRequested      Friendship[]                  @relation("FriendshipRequester")
   friendshipsReceived       Friendship[]                  @relation("FriendshipAddressee")
@@ -87,6 +89,7 @@ model User {
   clubInvitations           ClubInvitation[]              @relation("ClubInvitee")
   clubInvitationsSent       ClubInvitation[]              @relation("ClubInviter")
   clubMatchesProposed       ClubMatch[]                   @relation("ClubMatchProposer")
+  analyticsEvents           AnalyticsEvent[]
   clubBoardsHome            ClubMatchBoard[]              @relation("ClubBoardHome")
   clubBoardsAway            ClubMatchBoard[]              @relation("ClubBoardAway")
 }
@@ -499,6 +502,7 @@ enum BalanceTransactionType {
   MONEY_STAKE_REFUNDED
   MONEY_COMMISSION
   ADMIN_ADJUSTMENT
+  OBJECTIVE_REWARD
 }
 
 enum GameResult {
@@ -1136,4 +1140,26 @@ model ClubMatchBoard {
   @@unique([clubMatchId, board])
   @@index([homePlayerId])
   @@index([awayPlayerId])
+}
+
+/// Mesure d'audience interne : aucun IP, aucune empreinte, conservation limitée.
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  name       String   @db.VarChar(48)
+  userId     String?
+  /// Identifiant aléatoire du navigateur (localStorage), sans lien avec l'identité.
+  anonId     String?  @db.VarChar(40)
+  /// mobile | tablet | desktop
+  device     String?  @db.VarChar(12)
+  standalone Boolean  @default(false)
+  experiment String?  @db.VarChar(40)
+  variant    String?  @db.VarChar(16)
+  props      Json?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([name, createdAt])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([experiment, variant])
 }

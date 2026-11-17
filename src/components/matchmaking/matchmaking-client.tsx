@@ -1,6 +1,8 @@
 "use client";
 
 import { AdSlot } from "@/components/ads/ad-slot";
+import { PremiumHint } from "@/components/premium/premium-hint";
+import { track } from "@/lib/client/telemetry";
 import {
   ArrowLeft,
   CircleDot,
@@ -85,6 +87,23 @@ export function MatchmakingClient() {
   } | null>(null);
   const [cuttingMatch, setCuttingMatch] = useState(false);
   const [gameMode, setGameMode] = useState<GameMode>("CASUAL");
+  const [quota, setQuota] = useState<{ limited: boolean; limit: number; remaining: number | null; resetsAt: string } | null>(null);
+  const [quotaReached, setQuotaReached] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/player/quota", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((q) => {
+        if (!active || !q) return;
+        setQuota(q);
+        if (q.limited && q.remaining === 0) setQuotaReached(true);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
   const [draughtsVariant, setDraughtsVariant] = useState<"INTERNATIONAL" | "ENGLISH">("INTERNATIONAL");
   const [timeControl, setTimeControl] = useState<number | null>(null);
   const [stake, setStake] = useState<number | null>(null);
@@ -357,6 +376,11 @@ export function MatchmakingClient() {
       router.push(
         `/match/${encodeURIComponent(matchId)}?opponent=${encodeURIComponent(opponentId)}`,
       );
+    });
+    socket.on("quota_reached", (q) => {
+      setQuota({ limited: true, limit: q.limit, remaining: 0, resetsAt: q.resetsAt });
+      setQuotaReached(true);
+      track("quota_reached", { limit: q.limit });
     });
     socket.on("server_error", ({ message }) => {
       if (matchmakingTimeoutRef.current) {
@@ -711,7 +735,31 @@ export function MatchmakingClient() {
           )}
         </section>
 
-        {error && (
+        {quota?.limited && !quotaReached && quota.remaining !== null && (
+          <p className="text-xs text-ink-muted">
+            Parties en ligne gratuites restantes aujourd’hui : <strong className="tabular text-ink">{quota.remaining} / {quota.limit}</strong>.
+            Les tournois et l’entraînement contre l’IA ne sont pas décomptés.
+          </p>
+        )}
+
+        {quotaReached && (
+          <section className="card space-y-3 p-5" aria-live="polite">
+            <h2 className="text-base font-semibold">Vous avez joué vos {quota?.limit ?? ""} parties gratuites du jour</h2>
+            <p className="text-sm text-ink-soft">
+              Le compteur repart à zéro à minuit. Votre partie en cours, s’il y en a une, n’est jamais concernée. En attendant :
+            </p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Link href="/tournois" className="btn btn-ghost justify-start">Jouer un tournoi</Link>
+              <Link href="/match/ia" className="btn btn-ghost justify-start">S’entraîner contre l’IA</Link>
+              <Link href="/mes-parties" className="btn btn-ghost justify-start">Revoir mes parties</Link>
+            </div>
+            <PremiumHint context="quota" title="Jouer sans limite">
+              Tous les niveaux Premium incluent les parties en ligne illimitées, sans aucun avantage sur le plateau.
+            </PremiumHint>
+          </section>
+        )}
+
+        {error && !(quotaReached && error.startsWith("Vous avez joué vos")) && (
           <div className="flex items-start justify-between gap-4 rounded-xl border border-red-300/20 bg-red-300/[0.06] p-4 text-sm text-red-100">
             <div>
               <p>{error}</p>

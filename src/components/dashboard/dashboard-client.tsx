@@ -1,6 +1,7 @@
 "use client";
 
 import { AdSlot } from "@/components/ads/ad-slot";
+import { EngagementPanel } from "@/components/dashboard/engagement-panel";
 import {
   ArrowDownRight,
   ArrowRight,
@@ -66,6 +67,15 @@ export function DashboardClient() {
   const [error, setError] = useState("");
   const [savingPreference, setSavingPreference] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  // Le formulaire de profil est replié : l'accueil sert d'abord à jouer.
+  const [editOpen, setEditOpen] = useState(false);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("profil") === "1") {
+      const handle = setTimeout(() => setEditOpen(true), 0);
+      return () => clearTimeout(handle);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -328,8 +338,9 @@ export function DashboardClient() {
               </span>
             </h1>
             <p className="mt-6 max-w-lg text-base leading-7 text-white/55">
-              Retrouvez votre espace de jeu, suivez votre classement et
-              préparez votre prochaine partie.
+              {profile
+                ? "Retrouvez votre espace de jeu, suivez votre classement et préparez votre prochaine partie."
+                : "Jouez gratuitement aux dames et aux échecs contre de vrais adversaires, participez à des tournois et rejoignez des clubs. Inscription en quelques secondes, sans e-mail."}
             </p>
 
             {loading ? (
@@ -408,9 +419,18 @@ export function DashboardClient() {
                   </div>
                 </div>
 
+                <details
+                  open={editOpen}
+                  onToggle={(event) => setEditOpen(event.currentTarget.open)}
+                  className="group mt-6 border-t border-white/[0.08] pt-4"
+                >
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-xl px-1 py-2 text-sm text-white/60 hover:text-white/80">
+                    <span>Modifier mon profil, mon avatar et mes préférences</span>
+                    <ArrowRight size={15} className="transition group-open:rotate-90" />
+                  </summary>
                 <form
                   onSubmit={handleSaveProfile}
-                  className="mt-6 grid gap-3 border-t border-white/[0.08] pt-5 sm:grid-cols-2"
+                  className="mt-3 grid gap-3 sm:grid-cols-2"
                 >
                   <label className="text-xs font-medium text-white/55 sm:col-span-2">
                     Pseudo
@@ -550,15 +570,16 @@ export function DashboardClient() {
                       : "Cette préférence est sauvegardée sur votre profil."}
                   </p>
                 </div>
+                </details>
 
-                <div className="mt-5 flex items-center justify-between border-t border-white/[0.08] pt-5">
-                  <span className="text-sm text-white/45">
+                <Link href="/match/en-ligne" className="group mt-5 flex items-center justify-between border-t border-white/[0.08] pt-5">
+                  <span className="text-sm text-white/45 group-hover:text-white/70">
                     Prêt pour votre prochaine partie ?
                   </span>
-                  <span className="flex size-9 items-center justify-center rounded-full bg-emerald-300 text-accent-ink">
+                  <span className="flex size-9 items-center justify-center rounded-full bg-emerald-300 text-accent-ink transition group-hover:translate-x-0.5">
                     <ArrowRight size={17} />
                   </span>
-                </div>
+                </Link>
               </section>
             ) : (
               <form
@@ -673,27 +694,6 @@ export function DashboardClient() {
 
             <nav aria-label="Modes de jeu" className="grid gap-3">
               <Link
-                href="/match/ia"
-                className="group flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] p-5 transition hover:border-emerald-200/30 hover:bg-emerald-200/[0.06]"
-              >
-                <span className="flex items-center gap-4">
-                  <span className="flex size-12 items-center justify-center rounded-xl bg-emerald-300/10 text-emerald-200">
-                    <Bot size={23} />
-                  </span>
-                  <span>
-                    <span className="block font-semibold">Jouer contre l&apos;IA</span>
-                    <span className="mt-1 block text-sm text-white/40">
-                      Entraînez-vous à votre rythme
-                    </span>
-                  </span>
-                </span>
-                <ArrowRight
-                  className="text-white/35 transition group-hover:translate-x-1 group-hover:text-emerald-200"
-                  size={19}
-                />
-              </Link>
-
-              <Link
                 href="/match/en-ligne"
                 className="group flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] p-5 transition hover:border-emerald-200/30 hover:bg-emerald-200/[0.06]"
               >
@@ -705,6 +705,27 @@ export function DashboardClient() {
                     <span className="block font-semibold">Match en ligne</span>
                     <span className="mt-1 block text-sm text-white/40">
                       Trouvez un adversaire
+                    </span>
+                  </span>
+                </span>
+                <ArrowRight
+                  className="text-white/35 transition group-hover:translate-x-1 group-hover:text-emerald-200"
+                  size={19}
+                />
+              </Link>
+
+              <Link
+                href="/match/ia"
+                className="group flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] p-5 transition hover:border-emerald-200/30 hover:bg-emerald-200/[0.06]"
+              >
+                <span className="flex items-center gap-4">
+                  <span className="flex size-12 items-center justify-center rounded-xl bg-emerald-300/10 text-emerald-200">
+                    <Bot size={23} />
+                  </span>
+                  <span>
+                    <span className="block font-semibold">Jouer contre l&apos;IA</span>
+                    <span className="mt-1 block text-sm text-white/40">
+                      Entraînez-vous à votre rythme
                     </span>
                   </span>
                 </span>
@@ -749,9 +770,16 @@ export function DashboardClient() {
           </div>
         </section>
 
-        <footer className="flex flex-col justify-between gap-2 border-t border-white/[0.08] pt-5 text-xs text-white/30 sm:flex-row">
+        {profile && <EngagementPanel />}
+
+        <footer className="mt-10 flex flex-col justify-between gap-2 border-t border-white/[0.08] pt-5 text-xs text-white/30 sm:flex-row">
           <span>THOT STRATÉGIE · Jeux de dames et d&apos;échecs</span>
-          <span>Environnement de développement local</span>
+          <span className="flex gap-4">
+            <Link href="/premium" className="hover:text-white/60">Premium</Link>
+            <button type="button" className="hover:text-white/60" onClick={() => window.dispatchEvent(new Event("thot:install"))}>
+              Installer l’application
+            </button>
+          </span>
         </footer>
       </div>
       <div className="mx-auto mt-8 w-full max-w-7xl">

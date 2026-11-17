@@ -2,6 +2,7 @@ import { FriendChallengeStatus, MatchMode, MatchStatus, Prisma } from "@/generat
 import { withSerializableRetry } from "@/lib/db/retry";
 import { assertCanQueueForMoney, getMoneyRules, lockMoneyMatchStakes, MoneyEligibilityError } from "@/lib/economy/money-matches";
 import { prisma } from "@/lib/prisma";
+import { assertCanStartGame, QuotaReachedError } from "@/lib/quota";
 import { getSettings } from "@/lib/settings/service";
 import { CommunityError, PLAYER_CARD_SELECT, assertNotBlocked, playerCard, requireActor } from "./core";
 import { areFriends } from "./friends";
@@ -67,6 +68,15 @@ async function completeFinishedChallenges(userId: string) {
   });
 }
 
+async function assertQuota(userId: string, mode: MatchMode) {
+  try {
+    await assertCanStartGame(userId, mode, "challenge");
+  } catch (error) {
+    if (error instanceof QuotaReachedError) throw new CommunityError(error.message, 403);
+    throw error;
+  }
+}
+
 export async function createChallenge(userId: string, input: ChallengeInput) {
   const actor = await requireActor(userId);
   const settings = await getSettings([
@@ -108,6 +118,8 @@ export async function createChallenge(userId: string, input: ChallengeInput) {
   const mode = input.mode === "RATED" ? MatchMode.RATED : input.mode === "MONEY" ? MatchMode.MONEY : MatchMode.CASUAL;
   if (mode === MatchMode.CASUAL && !settings["matchmaking.casualEnabled"]) throw new CommunityError("Les parties amicales sont fermées.", 403);
   if (mode === MatchMode.RATED && !settings["matchmaking.ratedEnabled"]) throw new CommunityError("Les parties classées sont fermées.", 403);
+
+  await assertQuota(userId, mode);
 
   let stakeAmount: number | null = null;
   if (mode === MatchMode.MONEY) {
@@ -191,6 +203,15 @@ export async function respondChallenge(
   }
 
   await assertNotBlocked(userId, challenge.challengerId);
+  await assertQuota(userId, challenge.mode);
+  try {
+    await assertCanStartGame(challenge.challengerId, challenge.mode, "challenge");
+  } catch (error) {
+    if (error instanceof QuotaReachedError) {
+      throw new CommunityError("Votre ami a atteint sa limite de parties du jour : réessayez demain ou proposez un autre défi plus tard.", 409);
+    }
+    throw error;
+  }
   if (challenge.mode === MatchMode.MONEY) {
     if (options.acceptMoney !== true) {
       throw new CommunityError("Ce défi engage des points argent : confirmez explicitement la mise pour l’accepter.", 400);

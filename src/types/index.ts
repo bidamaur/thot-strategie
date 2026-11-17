@@ -188,6 +188,8 @@ export interface ServerToClientEvents {
   player_reconnected: (payload: { playerId: string }) => void;
   player_reconnect_expired: (payload: { playerId: string }) => void;
   server_error: (payload: { message: string }) => void;
+  /** Quota quotidien de l'offre gratuite atteint (au lancement d'une partie uniquement). */
+  quota_reached: (payload: { limit: number; used: number; remaining: number | null; resetsAt: string }) => void;
   chat_message: (payload: { matchId: string; from: string; text: string; ts: number }) => void;
   bet_proposed: (payload: { matchId: string; amount: number; by: string }) => void;
   bet_accepted: (payload: { matchId: string; amount: number; by: string }) => void;

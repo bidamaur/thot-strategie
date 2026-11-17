@@ -14,7 +14,8 @@
     "test": "vitest run",
     "test:integration": "tsx scripts/test-platform-integration.ts",
     "test:tournaments": "tsx scripts/test-tournament-formats.ts",
-    "test:community": "tsx scripts/test-community.ts"
+    "test:community": "tsx scripts/test-community.ts",
+    "test:engagement": "tsx scripts/test-engagement.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

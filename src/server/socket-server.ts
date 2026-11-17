@@ -17,6 +17,7 @@ import { abortMatch, settleMatch } from "../lib/scoring/settle-match";
 import { closeExpiredTimedTournaments, reportTournamentGame } from "../lib/economy/tournaments";
 import { expireChallenges, staleChallengeMatchIds } from "../lib/community/challenges";
 import { staleInterclubMatchIds } from "../lib/community/interclub";
+import { assertCanStartGame, QuotaReachedError, serializeQuota } from "../lib/quota";
 import { withSerializableRetry } from "../lib/db/retry";
 import {
   chessSideCanMate,
@@ -1181,6 +1182,16 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       });
       return;
     }
+    try {
+      await assertCanStartGame(playerId, match.mode, "rematch");
+    } catch (error) {
+      if (error instanceof QuotaReachedError) {
+        socket.emit("quota_reached", serializeQuota(error.status));
+        socket.emit("server_error", { message: error.message });
+        return;
+      }
+      console.error("Vérification du quota impossible :", error);
+    }
 
     let requests = rematchRequests.get(matchId);
     if (!requests) {
@@ -1718,6 +1729,19 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         rawTime <= queueSettings["matchmaking.timeControlMax"]
           ? rawTime
           : null;
+
+      // Quota quotidien de l'offre gratuite : vérifié au lancement seulement,
+      // jamais pendant une partie (aucune partie commencée n'est interrompue).
+      try {
+        await assertCanStartGame(playerId, requestedMode, "queue");
+      } catch (error) {
+        if (error instanceof QuotaReachedError) {
+          socket.emit("quota_reached", serializeQuota(error.status));
+          socket.emit("server_error", { message: error.message });
+          return;
+        }
+        console.error("Vérification du quota impossible :", error);
+      }
 
       let stake: number | null = null;
       if (requestedMode === "MONEY") {

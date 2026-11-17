@@ -11,6 +11,18 @@
  * (formulaire d'administration) comme côté serveur.
  */
 
+import {
+  DEFAULT_CAMPAIGNS,
+  DEFAULT_EXPERIMENTS,
+  DEFAULT_OBJECTIVES,
+  validateCampaigns,
+  validateExperiments,
+  validateObjectives,
+  type CampaignDef,
+  type ExperimentDef,
+  type ObjectiveDef,
+} from "@/lib/engagement/definitions";
+
 export type SettingCategory =
   | "points"
   | "rating"
@@ -23,6 +35,10 @@ export type SettingCategory =
   | "clubs"
   | "community"
   | "storage"
+  | "freePlan"
+  | "engagement"
+  | "pwa"
+  | "analytics"
   | "ads";
 
 export const SETTING_CATEGORIES: Record<
@@ -72,6 +88,22 @@ export const SETTING_CATEGORIES: Record<
   storage: {
     label: "Images et stockage",
     description: "Compression des images envoyées et emplacement de sauvegarde (dossier local ou réseau, ou serveur de fichiers compatible S3). Les clés d'accès S3 restent dans les variables d'environnement.",
+  },
+  freePlan: {
+    label: "Offre gratuite",
+    description: "Quota quotidien de parties, période de découverte. Les tournois, l'entraînement contre l'IA et les parties en cours ne sont jamais bloqués.",
+  },
+  engagement: {
+    label: "Fidélisation et campagnes",
+    description: "Parcours de bienvenue, objectifs quotidiens et hebdomadaires (récompenses en points classiques uniquement), campagnes et fréquence des sollicitations.",
+  },
+  pwa: {
+    label: "Application installable",
+    description: "Nom, couleurs et proposition d'installation de l'application (ordinateur, Android, iPhone).",
+  },
+  analytics: {
+    label: "Mesure d'audience",
+    description: "Indicateurs anonymisés (aucune adresse IP ni empreinte de navigateur), conservation limitée et tests A/B.",
   },
   ads: {
     label: "Publicité",
@@ -129,6 +161,8 @@ export interface PremiumPrivileges {
   maxBulkInvites?: number;
   /** Personnalisation de la page de club (logo, couleur). */
   clubCustomization?: boolean;
+  /** Parties en ligne illimitées (sinon quota quotidien de l'offre gratuite, s'il est activé). */
+  unlimitedGames?: boolean;
 }
 
 export interface PremiumTier {
@@ -170,6 +204,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       communityStats: false,
       maxBulkInvites: 5,
       clubCustomization: false,
+      unlimitedGames: false,
     },
   },
   {
@@ -200,6 +235,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       maxBulkInvites: 10,
       clubCustomization: false,
       adFree: true,
+      unlimitedGames: true,
     },
   },
   {
@@ -230,6 +266,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       maxBulkInvites: 20,
       clubCustomization: true,
       adFree: true,
+      unlimitedGames: true,
     },
   },
   {
@@ -263,6 +300,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       maxBulkInvites: 50,
       clubCustomization: true,
       adFree: true,
+      unlimitedGames: true,
     },
   },
   {
@@ -296,6 +334,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       maxBulkInvites: 100,
       clubCustomization: true,
       adFree: true,
+      unlimitedGames: true,
     },
   },
   {
@@ -329,6 +368,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       maxBulkInvites: 200,
       clubCustomization: true,
       adFree: true,
+      unlimitedGames: true,
     },
   },
 ];
@@ -493,6 +533,35 @@ export const SETTING_DEFINITIONS = [
   { key: "images.maxPostDimension", category: "storage", type: "number", default: 1600, min: 400, max: 4000, integer: true, label: "Taille maximale des images de publication", unit: "px" },
   { key: "images.maxAvatarDimension", category: "storage", type: "number", default: 256, min: 64, max: 1024, integer: true, label: "Taille maximale des avatars", unit: "px" },
   { key: "images.maxLogoDimension", category: "storage", type: "number", default: 320, min: 64, max: 1024, integer: true, label: "Taille maximale des logos de club", unit: "px" },
+  // ── Offre gratuite ───────────────────────────────────────────────────
+  { key: "freePlan.dailyGamesEnabled", category: "freePlan", type: "boolean", default: false, critical: true, label: "Limiter le nombre de parties gratuites par jour", description: "Désactivé par défaut : à activer après validation. Ne concerne que les parties en ligne amicales et classées lancées par le joueur." },
+  { key: "freePlan.dailyGames", category: "freePlan", type: "number", default: 10, min: 1, max: 500, integer: true, label: "Parties en ligne gratuites par jour", unit: "parties", description: "Comptées au lancement ; les parties annulées avant le 2e coup ne comptent pas. Remise à zéro à minuit (heure du serveur)." },
+  { key: "freePlan.newPlayerGraceDays", category: "freePlan", type: "number", default: 7, min: 0, max: 90, integer: true, label: "Période de découverte sans limite", unit: "jours", description: "Les nouveaux comptes jouent sans limite pendant cette période." },
+  { key: "freePlan.countFriendChallenges", category: "freePlan", type: "boolean", default: true, label: "Les défis entre amis comptent dans le quota", description: "Les revanches comptent toujours : ce sont de nouvelles parties." },
+  { key: "freePlan.warnAtRemaining", category: "freePlan", type: "number", default: 2, min: 0, max: 50, integer: true, label: "Prévenir le joueur quand il reste N parties" },
+  // ── Fidélisation ─────────────────────────────────────────────────────
+  { key: "engagement.onboardingEnabled", category: "engagement", type: "boolean", default: true, label: "Parcours de bienvenue (premiers pas) sur l'accueil" },
+  { key: "engagement.objectivesEnabled", category: "engagement", type: "boolean", default: true, label: "Objectifs quotidiens et hebdomadaires" },
+  { key: "engagement.objectives", category: "engagement", type: "json", default: DEFAULT_OBJECTIVES, label: "Objectifs", description: "Liste [{id, period: daily|weekly, metric, target, rewardPoints, label, enabled}]. Mesures : games_played, games_won, rated_games, tournament_games, community_posts, friend_games. Récompense en points classiques uniquement." },
+  { key: "engagement.objectiveRewardsEnabled", category: "engagement", type: "boolean", default: true, label: "Récompenser les objectifs en points classiques", description: "Désactivé : les objectifs restent affichés sans récompense. Jamais d'ELO ni de points argent." },
+  { key: "engagement.promptsEnabled", category: "engagement", type: "boolean", default: true, label: "Fenêtres et bandeaux de sollicitation", description: "Jamais en salle de jeu ; une seule sollicitation à la fois." },
+  { key: "engagement.promptMinIntervalHours", category: "engagement", type: "number", default: 20, min: 0, max: 720, integer: true, label: "Délai minimum entre deux fenêtres importantes", unit: "h" },
+  { key: "engagement.campaigns", category: "engagement", type: "json", default: DEFAULT_CAMPAIGNS, label: "Campagnes et messages promotionnels", description: "Liste [{id, enabled, audience: all|free|premium|new, kind: modal|banner, title, body, ctaLabel, ctaHref (lien interne), pages, startsAt, endsAt, maxShows, cooldownDays, variantB}]." },
+  { key: "engagement.premiumHintsEnabled", category: "engagement", type: "boolean", default: true, label: "Messages Premium contextuels discrets", description: "Statistiques, historique, quota atteint, organisation de tournoi. Jamais en salle de jeu." },
+  // ── Application installable ──────────────────────────────────────────
+  { key: "pwa.appName", category: "pwa", type: "string", default: "Thot Stratégie — Dames & Échecs", maxLength: 60, label: "Nom complet de l'application" },
+  { key: "pwa.shortName", category: "pwa", type: "string", default: "Thot", maxLength: 12, label: "Nom court (sous l'icône)" },
+  { key: "pwa.themeColor", category: "pwa", type: "string", default: "#0f1513", maxLength: 7, pattern: "^#[0-9a-fA-F]{6}$", label: "Couleur du thème" },
+  { key: "pwa.backgroundColor", category: "pwa", type: "string", default: "#0f1513", maxLength: 7, pattern: "^#[0-9a-fA-F]{6}$", label: "Couleur de l'écran de démarrage" },
+  { key: "pwa.installPromptEnabled", category: "pwa", type: "boolean", default: true, label: "Proposer l'installation" },
+  { key: "pwa.installPromptMinVisits", category: "pwa", type: "number", default: 3, min: 1, max: 50, integer: true, label: "Visites avant la première proposition", description: "Jamais à la première visite." },
+  { key: "pwa.installPromptCooldownDays", category: "pwa", type: "number", default: 21, min: 1, max: 365, integer: true, label: "Délai avant de reproposer après un refus", unit: "jours" },
+  { key: "pwa.installPromptMaxDismissals", category: "pwa", type: "number", default: 2, min: 1, max: 10, integer: true, label: "Refus après lesquels on ne propose plus" },
+  { key: "pwa.installMessage", category: "pwa", type: "string", default: "Installez Thot sur votre écran d'accueil : ouverture instantanée, plein écran, sans passer par le navigateur.", maxLength: 200, label: "Message de proposition d'installation" },
+  // ── Mesure d'audience ────────────────────────────────────────────────
+  { key: "analytics.enabled", category: "analytics", type: "boolean", default: true, label: "Mesure d'audience interne", description: "Événements anonymisés stockés sur vos serveurs (aucun service tiers). Les navigateurs « Ne pas suivre » sont respectés." },
+  { key: "analytics.retentionDays", category: "analytics", type: "number", default: 180, min: 7, max: 730, integer: true, label: "Conservation des événements", unit: "jours" },
+  { key: "analytics.experiments", category: "analytics", type: "json", default: DEFAULT_EXPERIMENTS, label: "Tests A/B", description: "Liste [{id, enabled, variants, description}]. Expériences branchées : premium_hero (A/B), install_prompt (banner/card)." },
   { key: "ads.enabled", category: "ads", type: "boolean", default: true, label: "Publicité active" },
   { key: "ads.clientId", category: "ads", type: "string", default: "", maxLength: 40, pattern: "^ca-pub-[0-9]{10,20}$", placeholder: "ca-pub-0000000000000000", label: "Identifiant éditeur AdSense", description: "Format ca-pub-XXXXXXXXXXXXXXXX. Vide = espaces réservés affichés sans annonce." },
   { key: "ads.slots", category: "ads", type: "json", default: { home: "", play: "", tournaments: "", tournament: "", leaderboard: "", clubs: "", wallet: "" }, label: "Identifiants des blocs d'annonces", description: "Un identifiant AdSense (data-ad-slot) par emplacement." },
@@ -523,6 +592,9 @@ export type SettingValue<K extends SettingKey> =
   : K extends "ads.slots" ? Record<string, string>
   : K extends "ads.placements" ? string[]
   : K extends "community.disabledNotificationTypes" ? string[]
+  : K extends "engagement.objectives" ? ObjectiveDef[]
+  : K extends "engagement.campaigns" ? CampaignDef[]
+  : K extends "analytics.experiments" ? ExperimentDef[]
   : K extends "allowed_tournament_types" ? string[]
   : K extends "tournament_max_players" ? { min: number; max: number }
   : K extends "tournaments.prizeSplitPercent" ? [number, number, number]
@@ -585,6 +657,13 @@ function validateJsonSetting(
   label: string,
 ): { ok: true; value: unknown } | { ok: false; error: string } {
   if (value === undefined || value === null) return { ok: false, error: `${label} : valeur requise.` };
+  if (key === "engagement.objectives" || key === "engagement.campaigns" || key === "analytics.experiments") {
+    const error =
+      key === "engagement.objectives" ? validateObjectives(value)
+      : key === "engagement.campaigns" ? validateCampaigns(value)
+      : validateExperiments(value);
+    return error ? { ok: false, error } : { ok: true, value };
+  }
   if (key === "community.disabledNotificationTypes") {
     if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && /^[A-Z_]{3,40}$/.test(v))) {
       return { ok: false, error: "Liste de types de notification attendue (ex. [\"POST_REACTION\"])." };

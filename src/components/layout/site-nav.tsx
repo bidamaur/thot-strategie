@@ -1,18 +1,22 @@
 "use client";
 
 import {
+  BarChart3,
   Bot,
   Crown,
+  Download,
   Gamepad2,
   Home,
   LogOut,
   Medal,
+  Menu,
   MessagesSquare,
   Shield,
   Swords,
   Trophy,
   Users,
   Wallet,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -35,8 +39,9 @@ const LINKS = [
   { href: "/communaute", label: "Communauté", icon: MessagesSquare, mobile: true },
   { href: "/clubs", label: "Clubs", icon: Users, mobile: false },
   { href: "/classements", label: "Classements", icon: Medal, mobile: false },
+  { href: "/mes-parties", label: "Mes parties", icon: BarChart3, mobile: false },
   { href: "/premium", label: "Premium", icon: Crown, mobile: false },
-  { href: "/portefeuille", label: "Portefeuille", icon: Wallet, mobile: true },
+  { href: "/portefeuille", label: "Portefeuille", icon: Wallet, mobile: false },
 ] as const;
 
 function isActive(pathname: string, href: string, exact?: boolean): boolean {
@@ -53,6 +58,7 @@ export function SiteNav() {
   const pathname = usePathname() ?? "/";
   const router = useRouter();
   const [user, setUser] = useState<NavUser | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -67,6 +73,12 @@ export function SiteNav() {
     };
   }, [pathname]);
 
+  // Le menu « Plus » se referme à chaque changement de page.
+  useEffect(() => {
+    const handle = setTimeout(() => setMoreOpen(false), 0);
+    return () => clearTimeout(handle);
+  }, [pathname]);
+
   if (pathname.startsWith("/admin")) return null;
   const inGameRoom = /^\/match\/(?!en-ligne|ia)[^/]+$/.test(pathname);
 
@@ -79,7 +91,7 @@ export function SiteNav() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-line bg-canvas/85 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-line bg-canvas/85 pt-[env(safe-area-inset-top)] backdrop-blur-md">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-4 px-4 sm:px-6">
           <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="Thot Stratégie — accueil">
             <span className="flex size-8 items-center justify-center rounded-xl border border-accent/25 bg-accent/10 text-accent">
@@ -151,15 +163,81 @@ export function SiteNav() {
                   key={href}
                   href={href}
                   aria-current={active ? "page" : undefined}
-                  className={`flex flex-col items-center gap-0.5 py-2 text-[11px] ${active ? "text-accent" : "text-ink-muted"}`}
+                  className={`flex min-h-12 flex-col items-center justify-center gap-0.5 py-2 text-[11px] ${active ? "text-accent" : "text-ink-muted"}`}
                 >
                   <Icon size={19} />
                   {label}
                 </Link>
               );
             })}
+            <button
+              type="button"
+              onClick={() => setMoreOpen((open) => !open)}
+              aria-expanded={moreOpen}
+              aria-controls="mobile-more"
+              className={`flex min-h-12 flex-col items-center justify-center gap-0.5 py-2 text-[11px] ${
+                moreOpen || LINKS.some((l) => !l.mobile && isActive(pathname, l.href)) ? "text-accent" : "text-ink-muted"
+              }`}
+            >
+              {moreOpen ? <X size={19} /> : <Menu size={19} />}
+              Plus
+            </button>
           </div>
         </nav>
+      )}
+
+      {!inGameRoom && moreOpen && (
+        <div className="fixed inset-0 z-30 bg-black/50 backdrop-blur-[2px] lg:hidden" onClick={() => setMoreOpen(false)}>
+          <div
+            id="mobile-more"
+            role="menu"
+            aria-label="Plus de rubriques"
+            onClick={(event) => event.stopPropagation()}
+            className="absolute inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] rounded-t-3xl border-t border-line-strong bg-surface p-4 shadow-2xl"
+          >
+            {user && (
+              <div className="mb-3 flex items-center gap-3 rounded-2xl border border-line px-3 py-2 text-xs">
+                <span className="font-semibold text-ink">{user.username}</span>
+                {user.isPremium && <Crown size={13} className="text-gold" aria-label="Premium" />}
+                <span className="tabular text-ink-muted">{user.elo} ELO</span>
+                <span className="tabular text-ink-muted">{Math.round(user.pointsFree)} pts</span>
+              </div>
+            )}
+            <div className="grid grid-cols-3 gap-2">
+              {LINKS.filter((link) => !link.mobile).map(({ href, label, icon: Icon }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  role="menuitem"
+                  className={`flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl border text-xs ${
+                    isActive(pathname, href) ? "border-accent/40 bg-accent/10 text-accent" : "border-line bg-surface-2 text-ink-soft"
+                  }`}
+                >
+                  <Icon size={20} />
+                  {label}
+                </Link>
+              ))}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMoreOpen(false);
+                  window.dispatchEvent(new Event("thot:install"));
+                }}
+                className="flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl border border-line bg-surface-2 text-xs text-ink-soft"
+              >
+                <Download size={20} />
+                Installer l’app
+              </button>
+              {user?.isAdmin && (
+                <Link href="/admin" role="menuitem" className="flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl border border-line bg-surface-2 text-xs text-ink-soft">
+                  <Shield size={20} />
+                  Admin
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

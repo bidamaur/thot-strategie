@@ -57,6 +57,7 @@ const ADMIN_PRIVILEGES: PremiumPrivileges = {
   communityStats: true,
   maxBulkInvites: 500,
   clubCustomization: true,
+  unlimitedGames: true,
 };
 
 export async function getPrivileges(user: PremiumSubject): Promise<{

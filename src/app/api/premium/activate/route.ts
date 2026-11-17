@@ -6,6 +6,7 @@ import {
   isMockEconomyEnabled,
   mockEconomyDisabledResponse,
 } from "@/lib/economy/mock-mode";
+import { trackServer } from "@/lib/analytics";
 import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/settings/service";
 import { NextResponse } from "next/server";
@@ -76,6 +77,7 @@ export async function POST(request: Request) {
       });
       return { level: tier.level, name: tier.name, amountCfa: tier.priceCfa, expiresAt };
     });
+    void trackServer("premium_activated", currentUser.id, { level: result.level });
     return NextResponse.json({ payment: { ...result, isPremium: true, simulated: true } });
   } catch (error) {
     console.error("Erreur lors de l’activation Premium simulée :", error);

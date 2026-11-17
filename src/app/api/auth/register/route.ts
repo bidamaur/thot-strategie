@@ -6,6 +6,7 @@ import {
   SESSION_DURATION_MS,
   toPublicProfile,
 } from "@/lib/auth/session";
+import { trackServer } from "@/lib/analytics";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
       select: PROFILE_SELECT,
     });
     const token = await createUserSession(user.id);
+    void trackServer("signup", user.id);
     const secure =
       new URL(request.url).protocol === "https:" ||
       request.headers.get("x-forwarded-proto") === "https";
