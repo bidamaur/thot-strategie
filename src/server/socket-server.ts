@@ -16,6 +16,7 @@ import { prisma } from "../lib/prisma";
 import { abortMatch, settleMatch } from "../lib/scoring/settle-match";
 import { closeExpiredTimedTournaments, reportTournamentGame } from "../lib/economy/tournaments";
 import { expireChallenges, staleChallengeMatchIds } from "../lib/community/challenges";
+import { staleInterclubMatchIds } from "../lib/community/interclub";
 import { withSerializableRetry } from "../lib/db/retry";
 import {
   chessSideCanMate,
@@ -1585,7 +1586,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
   const challengeTimer = setInterval(() => {
     void (async () => {
       await expireChallenges();
-      for (const matchId of await staleChallengeMatchIds()) {
+      const stale = [...(await staleChallengeMatchIds()), ...(await staleInterclubMatchIds())];
+      for (const matchId of stale) {
         const active = matches.get(matchId);
         if (active) {
           if (active.moves.length === 0 && active.joinedPlayerIds.size < 2) {

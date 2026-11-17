@@ -22,6 +22,7 @@ export type SettingCategory =
   | "premium"
   | "clubs"
   | "community"
+  | "storage"
   | "ads";
 
 export const SETTING_CATEGORIES: Record<
@@ -67,6 +68,10 @@ export const SETTING_CATEGORIES: Record<
   community: {
     label: "Communauté",
     description: "Fil, commentaires, amitiés, défis, salons, notifications et modération. Les privilèges Premium communautaires sont dans « Premium ».",
+  },
+  storage: {
+    label: "Images et stockage",
+    description: "Compression des images envoyées et emplacement de sauvegarde (dossier local ou réseau, ou serveur de fichiers compatible S3). Les clés d'accès S3 restent dans les variables d'environnement.",
   },
   ads: {
     label: "Publicité",
@@ -458,7 +463,7 @@ export const SETTING_DEFINITIONS = [
   { key: "community.postMaxLength", category: "community", type: "number", default: 3000, min: 50, max: 20_000, integer: true, label: "Taille maximale d'une publication", unit: "caractères" },
   { key: "community.postsPerHour", category: "community", type: "number", default: 10, min: 1, max: 1000, integer: true, label: "Publications maximum par heure et par joueur" },
   { key: "community.imagesEnabled", category: "community", type: "boolean", default: true, label: "Images dans les publications" },
-  { key: "community.imageMaxKb", category: "community", type: "number", default: 2048, min: 100, max: 10_240, integer: true, label: "Poids maximal d'une image", unit: "Ko" },
+  { key: "community.imageMaxKb", category: "community", type: "number", default: 8192, min: 100, max: 20_480, integer: true, label: "Poids maximal d'une image envoyée (avant compression)", unit: "Ko" },
   { key: "community.minAccountAgeHours", category: "community", type: "number", default: 0, min: 0, max: 720, integer: true, label: "Ancienneté du compte requise pour publier", unit: "h", description: "Freine les comptes créés pour spammer. 0 = aucune restriction." },
   { key: "community.commentsEnabled", category: "community", type: "boolean", default: true, label: "Commentaires autorisés" },
   { key: "community.commentMaxLength", category: "community", type: "number", default: 1000, min: 20, max: 2000, integer: true, label: "Taille maximale d'un commentaire", unit: "caractères" },
@@ -477,6 +482,17 @@ export const SETTING_DEFINITIONS = [
   { key: "community.privateRoomsEnabled", category: "community", type: "boolean", default: true, label: "Salons privés (selon le niveau Premium)" },
   { key: "community.disabledNotificationTypes", category: "community", type: "json", default: [], label: "Types de notifications désactivés pour tous", description: "Liste de types : FRIEND_REQUEST, FRIEND_ACCEPTED, POST_COMMENT, COMMENT_REPLY, POST_REACTION, CHALLENGE_RECEIVED, CHALLENGE_ACCEPTED, CHALLENGE_DECLINED, TOURNAMENT_INVITE, CLUB_INVITE, ROOM_PINNED, MODERATION." },
   { key: "community.reportAutoHideThreshold", category: "community", type: "number", default: 5, min: 0, max: 100, integer: true, label: "Masquage automatique après N signalements distincts", description: "0 = jamais : seul un modérateur masque." },
+  // ── Images et stockage ───────────────────────────────────────────────
+  { key: "storage.driver", category: "storage", type: "enum", default: "filesystem", critical: true, options: [{ value: "filesystem", label: "Dossier (local ou partage réseau monté)" }, { value: "s3", label: "Serveur de fichiers compatible S3 (S3, MinIO, R2…)" }], label: "Emplacement de sauvegarde des images" },
+  { key: "storage.fsRoot", category: "storage", type: "string", default: "storage/uploads", maxLength: 300, pattern: "^[^<>|?*]+$", placeholder: "storage/uploads, /mnt/images ou \\\\nas\\images", critical: true, label: "Dossier de sauvegarde", description: "Relatif au dossier de l'application ou absolu (disque dédié, partage réseau). Changer de dossier ne déplace pas les images déjà enregistrées." },
+  { key: "storage.publicBaseUrl", category: "storage", type: "string", default: "", maxLength: 300, pattern: "^(https?://[^ ]+)?$", placeholder: "https://images.thot-strategie.cm", label: "Adresse publique des images", description: "Vide : les images sont servies par l'application (/media/…). Renseignez l'adresse d'un autre serveur ou CDN qui expose le même dossier ou le compartiment S3." },
+  { key: "storage.s3Endpoint", category: "storage", type: "string", default: "", maxLength: 300, pattern: "^(https?://[^ /]+)?$", placeholder: "https://s3.eu-west-3.amazonaws.com", label: "S3 : adresse du serveur", description: "Clés d'accès : variables d'environnement STORAGE_S3_ACCESS_KEY_ID et STORAGE_S3_SECRET_ACCESS_KEY." },
+  { key: "storage.s3Bucket", category: "storage", type: "string", default: "", maxLength: 63, pattern: "^([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])?$", label: "S3 : compartiment (bucket)" },
+  { key: "storage.s3Region", category: "storage", type: "string", default: "us-east-1", maxLength: 40, pattern: "^[a-z0-9-]+$", label: "S3 : région", description: "« auto » pour Cloudflare R2, « us-east-1 » pour MinIO." },
+  { key: "images.quality", category: "storage", type: "number", default: 68, min: 30, max: 95, integer: true, label: "Qualité de compression WebP", description: "Plus bas = fichiers plus légers. 60–70 reste net à l'écran." },
+  { key: "images.maxPostDimension", category: "storage", type: "number", default: 1600, min: 400, max: 4000, integer: true, label: "Taille maximale des images de publication", unit: "px" },
+  { key: "images.maxAvatarDimension", category: "storage", type: "number", default: 256, min: 64, max: 1024, integer: true, label: "Taille maximale des avatars", unit: "px" },
+  { key: "images.maxLogoDimension", category: "storage", type: "number", default: 320, min: 64, max: 1024, integer: true, label: "Taille maximale des logos de club", unit: "px" },
   { key: "ads.enabled", category: "ads", type: "boolean", default: true, label: "Publicité active" },
   { key: "ads.clientId", category: "ads", type: "string", default: "", maxLength: 40, pattern: "^ca-pub-[0-9]{10,20}$", placeholder: "ca-pub-0000000000000000", label: "Identifiant éditeur AdSense", description: "Format ca-pub-XXXXXXXXXXXXXXXX. Vide = espaces réservés affichés sans annonce." },
   { key: "ads.slots", category: "ads", type: "json", default: { home: "", play: "", tournaments: "", tournament: "", leaderboard: "", clubs: "", wallet: "" }, label: "Identifiants des blocs d'annonces", description: "Un identifiant AdSense (data-ad-slot) par emplacement." },
@@ -486,6 +502,10 @@ export const SETTING_DEFINITIONS = [
   { key: "clubs.enabled", category: "clubs", type: "boolean", default: true, label: "Clubs actifs" },
   { key: "clubs.minPointsToCreate", category: "clubs", type: "number", default: 2000, min: 0, max: 100_000_000, integer: true, label: "Points requis pour créer un club sans Premium (0 = Premium obligatoire)" },
   { key: "clubs.defaultMaxMembers", category: "clubs", type: "number", default: 30, min: 2, max: 10_000, integer: true, label: "Capacité d'un club non Premium" },
+  { key: "clubs.interclubEnabled", category: "clubs", type: "boolean", default: true, label: "Rencontres interclubs" },
+  { key: "clubs.interclubRequiresPremium", category: "clubs", type: "boolean", default: true, label: "Lancer une rencontre interclubs exige le privilège Premium « championnats de club »", description: "Accepter un défi reste possible pour tout responsable de club." },
+  { key: "clubs.interclubMaxBoards", category: "clubs", type: "number", default: 8, min: 1, max: 20, integer: true, label: "Échiquiers maximum par rencontre interclubs" },
+  { key: "clubs.interclubProposalExpiryHours", category: "clubs", type: "number", default: 72, min: 1, max: 720, integer: true, label: "Délai de réponse à un défi interclubs", unit: "h" },
 ] as const satisfies readonly SettingDef[];
 
 export type SettingKey = (typeof SETTING_DEFINITIONS)[number]["key"];

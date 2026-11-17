@@ -7,6 +7,7 @@ import { EmptyState, PageShell } from "@/components/ui/page-header";
 import { useViewer } from "@/components/community/community-hub";
 import { InviteFriendsDialog } from "@/components/community/dialogs";
 import { Feed } from "@/components/community/feed";
+import { ClubMatchesSection } from "@/components/community/interclub";
 
 interface ClubDetail {
   club: {
@@ -196,6 +197,8 @@ export function ClubDetailClient({ slug }: { slug: string }) {
           )}
         </section>
       </div>
+
+      <ClubMatchesSection slug={slug} canPropose={isManager} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-base font-semibold">Mur du club</h2>

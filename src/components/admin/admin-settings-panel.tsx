@@ -137,6 +137,7 @@ export function AdminSettingsPanel() {
             <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Rechercher un paramètre…" className="field pl-9" />
           </label>
           {!filter && <p className="text-sm text-ink-muted">{categories[active].description}</p>}
+          {!filter && active === "storage" && <StorageTest />}
 
           {visible.map((row) => {
             const dirty = drafts[row.key] !== undefined;
@@ -278,6 +279,27 @@ export function AdminAuditView() {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/** Vérifie l'emplacement de sauvegarde actuel (enregistrer les paramètres avant de tester). */
+function StorageTest() {
+  const [state, setState] = useState<{ busy: boolean; ok?: boolean; message?: string; url?: string }>({ busy: false });
+  async function run() {
+    setState({ busy: true });
+    const response = await fetch("/api/admin/storage/test", { method: "POST" }).catch(() => null);
+    const json = (await response?.json().catch(() => ({}))) ?? {};
+    setState({ busy: false, ok: !!response?.ok && json.readable !== false, message: json.message ?? json.error ?? "Test impossible.", url: json.url });
+  }
+  return (
+    <div className="card-muted flex flex-wrap items-center gap-3 p-3 text-sm">
+      <button type="button" onClick={run} disabled={state.busy} className="btn btn-primary min-h-0 px-3 py-1.5">
+        {state.busy ? "Test en cours…" : "Tester le stockage"}
+      </button>
+      <span className={state.message ? (state.ok ? "text-accent" : "text-danger") : "text-ink-muted"}>
+        {state.message ?? "Envoie une petite image dans l’emplacement configuré, la relit puis la supprime."}
+      </span>
     </div>
   );
 }

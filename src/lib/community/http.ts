@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRequestUser } from "@/lib/auth/session";
+import { StorageError } from "@/lib/storage";
 import { UploadError } from "@/lib/uploads";
 import { CommunityError } from "./core";
 
@@ -28,6 +29,10 @@ export async function communityRoute(
     }
     if (error instanceof UploadError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    if (error instanceof StorageError) {
+      console.error("Stockage des images indisponible :", error.message);
+      return NextResponse.json({ error: "Le stockage des images est momentanément indisponible." }, { status: 503 });
     }
     console.error("Erreur API communauté :", error);
     return NextResponse.json({ error: "Une erreur est survenue. Réessayez dans un instant." }, { status: 500 });

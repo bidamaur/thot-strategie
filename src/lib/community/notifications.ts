@@ -20,6 +20,7 @@ export const NOTIFICATION_TYPES = {
   CHALLENGE_DECLINED: "Défi refusé ou expiré",
   TOURNAMENT_INVITE: "Invitation à un tournoi",
   CLUB_INVITE: "Invitation à un club",
+  CLUB_MATCH: "Rencontres interclubs de mes clubs",
   ROOM_PINNED: "Publication importante d’un salon suivi",
   MODERATION: "Décisions de modération",
 } as const;

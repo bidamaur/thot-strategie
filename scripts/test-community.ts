@@ -34,6 +34,10 @@ import { createPrivateRoom, listRooms, setRoomMembership } from "@/lib/community
 import { decodeFromDb, encodeForDb } from "@/lib/community/text";
 import { createTournament } from "@/lib/economy/tournaments";
 import { prisma } from "@/lib/prisma";
+import sharp from "sharp";
+import { getClubMatch, interclubStandings, proposeClubMatch, respondClubMatch, setLineup, startBoardGame } from "@/lib/community/interclub";
+import { deleteByUrl, keyFromUrl, readLocalObject, storageConfig } from "@/lib/storage";
+import { detectImageType, saveImage } from "@/lib/uploads";
 
 const tag = `cm${Date.now().toString(36)}`;
 const userIds: string[] = [];
@@ -271,6 +275,70 @@ async function main() {
   await rejects("profil invisible pour un joueur bloqué", () => getPublicProfile(carol.username, v(dave)), 404);
   await removeFriend(alice.id, bob.id);
   check("retirer un ami", !(await areFriends(alice.id, bob.id)));
+
+  console.log("12. Images : compression puis sauvegarde dans le stockage configuré");
+  {
+    const w = 2400, h = 1600, raw = Buffer.alloc(w * h * 3);
+    for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+      const i = (y * w + x) * 3, g = ((x * 13 + y * 7) % 11) - 5;
+      raw[i] = 120 + 80 * Math.sin(x / 90) + g; raw[i + 1] = 120 + 80 * Math.cos(y / 70) + g; raw[i + 2] = 140 + 50 * Math.sin((x - y) / 160) + g;
+    }
+    const png = await sharp(raw, { raw: { width: w, height: h, channels: 3 } }).png().toBuffer();
+    const url = await saveImage(new File([new Uint8Array(png)], "photo.png", { type: "image/png" }), { kind: "post", prefix: alice.id, maxBytes: 20 * 1024 * 1024 });
+    const key = keyFromUrl(await storageConfig(), url);
+    const stored = key ? await readLocalObject(key) : null;
+    check("image enregistrée en WebP dans le stockage", !!stored && detectImageType(stored) === "webp", url);
+    const meta = stored ? await sharp(stored).metadata() : null;
+    check(`compressée : ${Math.round(png.length / 1024)} Ko → ${Math.round((stored?.length ?? 0) / 1024)} Ko, ${meta?.width}×${meta?.height}`, !!stored && stored.length < png.length / 10 && meta?.width === 1600);
+    const withImage = await createPost(alice.id, { room: "general", body: "Ma position préférée", imageUrl: url });
+    check("publication avec l'image compressée", withImage.imageUrl === url);
+    await rejects("l'image d'un autre joueur reste refusée", () => createPost(bob.id, { room: "general", body: "vol", imageUrl: url }), 400);
+    await rejects("adresse étrangère refusée", () => createPost(alice.id, { room: "general", body: "x y", imageUrl: "https://ailleurs.com/a.webp" }), 400);
+    await deleteByUrl(url);
+    check("suppression du fichier", key !== null && (await readLocalObject(key)) === null);
+  }
+
+  console.log("13. Rencontre interclubs");
+  {
+    const clubA = await prisma.club.findUniqueOrThrow({ where: { id: clubIds[0]! } });
+    await prisma.clubMember.create({ data: { clubId: clubA.id, userId: carol.id } });
+    const clubB = await prisma.club.create({ data: { name: `${tag} club B`, slug: `${tag}-club-b`, ownerId: dave.id, maxMembers: 10, members: { create: [{ userId: dave.id, role: "OWNER" }, { userId: eve.id }] } } });
+    clubIds.push(clubB.id);
+    await rejects("lancer une rencontre exige le privilège Premium (fondateur gratuit)", () => proposeClubMatch(dave.id, { homeClub: clubB.slug, awayClub: clubA.slug, boards: 2, gameType: "CHESS" }), 403);
+    await rejects("un simple membre ne lance pas de rencontre", () => proposeClubMatch(carol.id, { homeClub: clubA.slug, awayClub: clubB.slug, boards: 2, gameType: "CHESS" }), 403);
+    const { id } = await proposeClubMatch(alice.id, { homeClub: clubA.slug, awayClub: clubB.slug, boards: 2, gameType: "CHECKERS", draughtsVariant: "INTERNATIONAL", timeControlMinutes: 5, mode: "CASUAL" });
+    await rejects("pas deux rencontres simultanées entre les mêmes clubs", () => proposeClubMatch(alice.id, { homeClub: clubA.slug, awayClub: clubB.slug, boards: 1, gameType: "CHESS" }), 409);
+    check("le club défié est notifié", (await prisma.notification.count({ where: { userId: dave.id, type: "CLUB_MATCH" } })) === 1);
+    await rejects("seul le club défié répond", () => respondClubMatch(alice.id, id, true), 403);
+    await respondClubMatch(dave.id, id, true);
+    await rejects("composition : membres du club uniquement", () => setLineup(alice.id, id, "HOME", [alice.id, eve.id]), 400);
+    await setLineup(alice.id, id, "HOME", [alice.id, carol.id]);
+    await setLineup(dave.id, id, "AWAY", [dave.id, eve.id]);
+    let view = await getClubMatch(id, { id: alice.id, isAdmin: false });
+    check("les deux équipes composées : rencontre en cours", view.status === "IN_PROGRESS" && view.boardList.every((b) => b.home && b.away));
+    const [b1, b2] = view.boardList;
+    await rejects("seuls les joueurs de l'échiquier lancent la partie", () => startBoardGame(carol.id, b1!.id), 403);
+    const g1 = await startBoardGame(alice.id, b1!.id);
+    const again = await startBoardGame(dave.id, b1!.id);
+    check("même partie pour les deux joueurs", g1.matchId === again.matchId);
+    const m1 = await prisma.match.findUniqueOrThrow({ where: { id: g1.matchId } });
+    check("échiquier 1 : le club recevant a les blancs, partie ordinaire", m1.playerWhiteId === alice.id && m1.playerBlackId === dave.id && m1.mode === "CASUAL" && m1.timeControlMinutes === 5);
+    await prisma.match.update({ where: { id: g1.matchId }, data: { status: "FINISHED", winnerId: alice.id } });
+    const g2 = await startBoardGame(eve.id, b2!.id);
+    const m2 = await prisma.match.findUniqueOrThrow({ where: { id: g2.matchId } });
+    check("échiquier 2 : couleurs inversées", m2.playerWhiteId === eve.id);
+    await prisma.match.update({ where: { id: g2.matchId }, data: { status: "ABORTED" } });
+    view = await getClubMatch(id, null);
+    check("partie annulée : l'échiquier redevient jouable", view.boardList[1]!.matchId === null && view.boardList[1]!.result === null && view.home.score === 1);
+    const g3 = await startBoardGame(carol.id, b2!.id);
+    await prisma.match.update({ where: { id: g3.matchId }, data: { status: "FINISHED", winnerId: null } });
+    view = await getClubMatch(id, null);
+    check("rencontre terminée 1,5 – 0,5, victoire du club A", view.status === "COMPLETED" && view.home.score === 1.5 && view.away.score === 0.5 && view.winnerClubId === clubA.id);
+    const table = await interclubStandings();
+    const rowA = table.find((r) => r.clubId === clubA.id);
+    const rowB = table.find((r) => r.clubId === clubB.id);
+    check("classement interclubs : 2 pts au vainqueur, 0 au perdant", rowA?.points === 2 && rowB?.points === 0 && rowA.rank < rowB!.rank);
+  }
 }
 
 main()

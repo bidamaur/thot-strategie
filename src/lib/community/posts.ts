@@ -2,6 +2,7 @@ import { CommunityReactionType, Prisma } from "@/generated/prisma-client";
 import { withSerializableRetry } from "@/lib/db/retry";
 import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings/service";
+import { keyFromUrl, storageConfig } from "@/lib/storage";
 import {
   AUTHOR_SELECT,
   actorPrivileges,
@@ -284,11 +285,12 @@ async function validateImage(actor: CommunityActor, imageUrl: unknown): Promise<
   if (imageUrl === undefined || imageUrl === null || imageUrl === "") return null;
   const settings = await getSettings(["community.imagesEnabled"] as const);
   if (!settings["community.imagesEnabled"]) throw new CommunityError("Les images sont désactivées.", 403);
-  // Seules les images téléversées par l'auteur lui-même sont acceptées.
-  if (typeof imageUrl !== "string" || !new RegExp(`^/uploads/community/${actor.id}_[a-z0-9]+\\.(png|jpg|webp|gif)$`).test(imageUrl)) {
+  // Seules les images téléversées (et compressées) par l'auteur lui-même, dans le stockage actuel, sont acceptées.
+  const key = typeof imageUrl === "string" ? keyFromUrl(await storageConfig(), imageUrl) : null;
+  if (!key || !new RegExp(`^community/${actor.id}_[a-f0-9]{18}\\.webp$`).test(key)) {
     throw new CommunityError("Image invalide.", 400);
   }
-  return imageUrl;
+  return imageUrl as string;
 }
 
 async function validateLink(linkType: unknown, linkId: unknown) {

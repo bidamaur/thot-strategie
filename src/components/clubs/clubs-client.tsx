@@ -1,5 +1,6 @@
 "use client";
 
+import { InterclubStandings } from "@/components/community/interclub";
 import { AdSlot } from "@/components/ads/ad-slot";
 import { Lock, MapPin, Plus, Search, Trophy, Users } from "lucide-react";
 import Link from "next/link";
@@ -140,6 +141,7 @@ export function ClubsClient() {
         </div>
       )}
       <AdSlot placement="clubs" />
+      <InterclubStandings />
     </PageShell>
   );
 }

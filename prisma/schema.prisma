@@ -86,6 +86,9 @@ model User {
   sanctionsIssued           CommunitySanction[]           @relation("SanctionIssuer")
   clubInvitations           ClubInvitation[]              @relation("ClubInvitee")
   clubInvitationsSent       ClubInvitation[]              @relation("ClubInviter")
+  clubMatchesProposed       ClubMatch[]                   @relation("ClubMatchProposer")
+  clubBoardsHome            ClubMatchBoard[]              @relation("ClubBoardHome")
+  clubBoardsAway            ClubMatchBoard[]              @relation("ClubBoardAway")
 }
 
 model UserSession {
@@ -137,6 +140,7 @@ model Match {
   tournamentMatchId    String?          @unique
   tournamentMatch      TournamentMatch? @relation(fields: [tournamentMatchId], references: [id], onDelete: SetNull)
   friendChallenge      FriendChallenge?
+  clubMatchBoard       ClubMatchBoard?
   gameBet              GameBet?
   resultRecord         MatchResult?
   ratingHistory        RatingHistory[]
@@ -709,24 +713,26 @@ model AuditLog {
 }
 
 model Club {
-  id          String           @id @default(cuid())
-  name        String           @unique @db.VarChar(60)
-  slug        String           @unique @db.VarChar(70)
-  description String?          @db.VarChar(1000)
-  ownerId     String
-  country     String?          @db.VarChar(80)
-  city        String?          @db.VarChar(80)
-  accentColor String?          @db.VarChar(9)
-  isPrivate   Boolean          @default(false)
-  maxMembers  Int              @default(50)
-  createdAt   DateTime         @default(now())
+  id              String           @id @default(cuid())
+  name            String           @unique @db.VarChar(60)
+  slug            String           @unique @db.VarChar(70)
+  description     String?          @db.VarChar(1000)
+  ownerId         String
+  country         String?          @db.VarChar(80)
+  city            String?          @db.VarChar(80)
+  accentColor     String?          @db.VarChar(9)
+  isPrivate       Boolean          @default(false)
+  maxMembers      Int              @default(50)
+  createdAt       DateTime         @default(now())
   /// Logo du club (fichier image servi depuis /uploads).
-  logo        String?          @db.VarChar(300)
-  owner       User             @relation("ClubOwner", fields: [ownerId], references: [id])
-  members     ClubMember[]
-  tournaments Tournament[]
-  posts       CommunityPost[]
-  invitations ClubInvitation[]
+  logo            String?          @db.VarChar(300)
+  owner           User             @relation("ClubOwner", fields: [ownerId], references: [id])
+  members         ClubMember[]
+  tournaments     Tournament[]
+  posts           CommunityPost[]
+  invitations     ClubInvitation[]
+  clubMatchesHome ClubMatch[]      @relation("ClubMatchHome")
+  clubMatchesAway ClubMatch[]      @relation("ClubMatchAway")
 
   @@index([ownerId])
   @@index([country, city])
@@ -1065,4 +1071,69 @@ model ClubInvitation {
 
   @@unique([clubId, userId])
   @@index([userId, status])
+}
+
+// ── Rencontres interclubs ─────────────────────────────────────────────
+
+enum ClubMatchStatus {
+  PROPOSED
+  LINEUP
+  IN_PROGRESS
+  COMPLETED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+/// Rencontre club contre club sur N échiquiers (chaque échiquier = une partie classique).
+model ClubMatch {
+  id                 String           @id @default(cuid())
+  homeClubId         String
+  awayClubId         String
+  proposedById       String
+  boards             Int
+  gameType           GameType
+  draughtsVariant    DraughtsVariant?
+  timeControlMinutes Int?
+  /// CASUAL ou RATED (jamais de points argent en interclubs).
+  mode               MatchMode        @default(CASUAL)
+  message            String?          @db.VarChar(300)
+  status             ClubMatchStatus  @default(PROPOSED)
+  homeScore          Float            @default(0)
+  awayScore          Float            @default(0)
+  winnerClubId       String?
+  expiresAt          DateTime
+  respondedAt        DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime         @default(now())
+  homeClub           Club             @relation("ClubMatchHome", fields: [homeClubId], references: [id], onDelete: Cascade)
+  awayClub           Club             @relation("ClubMatchAway", fields: [awayClubId], references: [id], onDelete: Cascade)
+  proposedBy         User             @relation("ClubMatchProposer", fields: [proposedById], references: [id], onDelete: Cascade)
+  boardList          ClubMatchBoard[]
+
+  @@index([homeClubId, status])
+  @@index([awayClubId, status])
+  @@index([status, expiresAt])
+}
+
+model ClubMatchBoard {
+  id           String    @id @default(cuid())
+  clubMatchId  String
+  board        Int
+  homePlayerId String?
+  awayPlayerId String?
+  /// Le club recevant a les blancs aux échiquiers impairs.
+  homeIsWhite  Boolean
+  matchId      String?   @unique
+  /// HOME, AWAY ou DRAW une fois la partie terminée.
+  result       String?   @db.VarChar(5)
+  clubMatch    ClubMatch @relation(fields: [clubMatchId], references: [id], onDelete: Cascade)
+  homePlayer   User?     @relation("ClubBoardHome", fields: [homePlayerId], references: [id], onDelete: SetNull)
+  awayPlayer   User?     @relation("ClubBoardAway", fields: [awayPlayerId], references: [id], onDelete: SetNull)
+  match        Match?    @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  @@unique([clubMatchId, board])
+  @@index([homePlayerId])
+  @@index([awayPlayerId])
 }
