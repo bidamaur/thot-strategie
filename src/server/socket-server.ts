@@ -17,10 +17,12 @@ import { abortMatch, settleMatch } from "../lib/scoring/settle-match";
 import { closeExpiredTimedTournaments, reportTournamentGame } from "../lib/economy/tournaments";
 import { withSerializableRetry } from "../lib/db/retry";
 import {
-  canOfferDrawAt,
-  draughtsQuietState,
+  chessSideCanMate,
+  draughtsDrawState,
+  draughtsDrawVerdict,
+  drawOfferBlock,
   gameProgressPercent,
-  isNoProgressDraw,
+  type AutoDrawRule,
   type DrawRules,
 } from "../lib/engine/draw-rules";
 import { getSettings, peekSetting } from "../lib/settings/service";
@@ -106,6 +108,8 @@ interface ActiveMatch {
     | null;
   betProposedById: string | null;
   drawOfferById: string | null;
+  /** Dernière proposition de nul refusée (délai avant de reproposer). */
+  lastDrawDecline: { byPlayerId: string; atPly: number } | null;
   timeProposal: number | null;
   timeProposalBy: string | null;
   whiteTimeMs: number | null;
@@ -311,6 +315,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       betStatus: stored.betStatus,
       betProposedById: stored.betProposedById,
        drawOfferById: null,
+      lastDrawDecline: null,
        timeProposal: null,
        timeProposalBy: null,
        whiteTimeMs: null,
@@ -343,9 +348,13 @@ export function attachSocketServer(httpServer: HttpServer): Server {
   };
 
   const currentDrawRules = (): DrawRules => ({
-    noProgressPlies: peekSetting("match.draughtsNoProgressDrawPlies"),
-    noProgressRequiresKing: peekSetting("match.draughtsNoProgressRequiresKing"),
+    repetition: peekSetting("match.drawRepetitionEnabled"),
+    kingMovesInternational: peekSetting("match.draughtsKingMovesDrawInternational"),
+    kingMovesEnglish: peekSetting("match.draughtsKingMovesDrawEnglish"),
+    endgameRules: peekSetting("match.draughtsEndgameDrawRules"),
+    drawOfferMinPlies: peekSetting("match.abortMovesThreshold"),
     drawOfferMinProgressPercent: peekSetting("match.drawOfferMinProgressPercent"),
+    drawOfferCooldownPlies: peekSetting("match.drawOfferCooldownPlies"),
   });
 
   const sendMatchState = (socket: GameSocket, match: ActiveMatch): void => {
@@ -393,6 +402,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       chatEnabled: peekSetting("match.chatEnabled"),
       tournamentId: match.tournamentId,
       drawRules: currentDrawRules(),
+      lastDrawDecline: match.lastDrawDecline,
     });
   };
 
@@ -502,7 +512,22 @@ export function attachSocketServer(httpServer: HttpServer): Server {
     io.to(match.matchId).emit("draw_offer_updated", {
       matchId: match.matchId,
       offeredByPlayerId: match.drawOfferById,
+      lastDrawDecline: match.lastDrawDecline,
     });
+  };
+
+  /** Types de pièces (p, n, b, r, q, k) d'un camp aux échecs, d'après l'historique validé. */
+  const chessPieceTypes = (match: ActiveMatch, color: "w" | "b"): string[] => {
+    const game = new Chess();
+    for (const ply of match.moves) {
+      if (ply.kind !== "CHESS") return [];
+      game.move({ from: ply.from as Square, to: ply.to as Square, promotion: ply.promotion ?? "q" });
+    }
+    return game
+      .board()
+      .flat()
+      .filter((piece) => piece !== null && piece.color === color)
+      .map((piece) => piece!.type);
   };
 
   const isJoinedSocket = (socket: GameSocket): boolean =>
@@ -518,7 +543,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       | "DISCONNECT_FORFEIT"
       | "TIME_OUT"
       | "NO_SHOW"
-      | "NO_PROGRESS_DRAW",
+      | "AUTO_DRAW",
+    autoDrawRule: AutoDrawRule | null = null,
   ): Promise<boolean> => {
     if (match.status !== "IN_PROGRESS" || match.processingAction) return false;
     match.processingAction = true;
@@ -554,7 +580,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       if (
         reason !== "GAME_OVER" &&
         reason !== "DRAW_OFFER" &&
-        reason !== "NO_PROGRESS_DRAW" &&
+        reason !== "AUTO_DRAW" &&
         reason !== "NO_SHOW" &&
         match.moves.length < abortThreshold
       ) {
@@ -595,6 +621,19 @@ export function attachSocketServer(httpServer: HttpServer): Server {
           releaseSockets();
           return true;
         }
+      }
+
+      // Échecs : temps écoulé alors que l'adversaire ne peut plus mater = nul (Lichess, Chess.com).
+      let drawRule = autoDrawRule;
+      if (
+        reason === "TIME_OUT" &&
+        winnerId !== null &&
+        match.gameType === "CHESS" &&
+        peekSetting("match.timeoutInsufficientMaterialDraw") &&
+        !chessSideCanMate(chessPieceTypes(match, winnerId === match.playerIds[0] ? "w" : "b"))
+      ) {
+        winnerId = null;
+        drawRule = "TIMEOUT_INSUFFICIENT";
       }
 
       const finalStatus =
@@ -663,6 +702,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
           opponentEloBalance: isWhite ? result.blackEloBalance : result.whiteEloBalance,
           status: finalStatus,
           reason,
+          drawRule,
           betSettled: result.betSettled,
           betAmount: result.betAmount,
           whiteResult: result.whiteResult,
@@ -830,8 +870,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       let normalizedMove: OnlinePly;
       let isFinished = false;
       let winnerId: string | null = null;
-      // Dames : nul automatique après N demi-coups sans prise ni promotion.
-      let noProgressDraw = false;
+      // Dames : nul automatique selon le règlement (répétition, 25/40 coups, finales 16/5).
+      let autoDraw: AutoDrawRule | null = null;
 
       if (match.gameType === "CHESS") {
         if (
@@ -916,10 +956,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
           const history = [...match.moves, move].filter(
             (ply): ply is Extract<OnlinePly, { kind: "CHECKERS" }> => ply.kind === "CHECKERS",
           );
-          noProgressDraw = isNoProgressDraw(
-            draughtsQuietState(match.draughtsVariant ?? "INTERNATIONAL", history),
-            currentDrawRules(),
-          );
+          const variant = match.draughtsVariant ?? "INTERNATIONAL";
+          autoDraw = draughtsDrawVerdict(variant, draughtsDrawState(variant, history), currentDrawRules());
         }
       }
 
@@ -934,7 +972,10 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         },
       });
        match.moves = moves;
-      if (match.drawOfferById) {
+      // Comme sur Lichess : l'offre reste valable pendant le coup de son auteur ;
+      // si l'adversaire joue au lieu de répondre, elle est considérée comme refusée.
+      if (match.drawOfferById && match.drawOfferById !== playerId) {
+        match.lastDrawDecline = { byPlayerId: match.drawOfferById, atPly: match.moves.length - 1 };
         match.drawOfferById = null;
         publishDrawOffer(match);
       }
@@ -945,8 +986,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         if (!(await finishMatch(match, winnerId, "GAME_OVER"))) {
           throw new Error("La partie n’a pas pu être clôturée.");
         }
-      } else if (noProgressDraw) {
-        if (!(await finishMatch(match, null, "NO_PROGRESS_DRAW"))) {
+      } else if (autoDraw) {
+        if (!(await finishMatch(match, null, "AUTO_DRAW", autoDraw))) {
           throw new Error("La partie n’a pas pu être clôturée.");
         }
       } else {
@@ -1234,6 +1275,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         betStatus: null,
         betProposedById: null,
         drawOfferById: null,
+      lastDrawDecline: null,
        timeProposal: null,
        timeProposalBy: null,
        whiteTimeMs: null,
@@ -1434,6 +1476,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       betStatus: null,
       betProposedById: null,
       drawOfferById: null,
+      lastDrawDecline: null,
       timeProposal: null,
       timeProposalBy: null,
       whiteTimeMs: null,
@@ -2421,7 +2464,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       }
 
       void loadMatch(payload.matchId)
-        .then((match) => {
+        .then(async (match) => {
           if (!match || !match.playerIds.includes(playerId)) {
             socket.emit("server_error", {
               message: "Vous ne participez pas à cette partie.",
@@ -2444,21 +2487,38 @@ export function attachSocketServer(httpServer: HttpServer): Server {
             });
             return;
           }
+          // Les deux joueurs proposent le nul : il est conclu (convention Lichess).
+          if (match.drawOfferById && match.drawOfferById !== playerId) {
+            if (!(await finishMatch(match, null, "DRAW_OFFER"))) {
+              socket.emit("server_error", { message: "La partie est déjà terminée." });
+            }
+            return;
+          }
           if (match.drawOfferById) {
             socket.emit("server_error", {
-              message: "Une demande de match nul est déjà en attente.",
+              message: "Votre proposition de match nul est déjà en attente.",
             });
             return;
           }
           const drawRules = currentDrawRules();
-          const progress = gameProgressPercent(
-            match.gameType,
-            match.draughtsVariant,
-            getRemainingPieces(match).total,
-          );
-          if (!canOfferDrawAt(progress, drawRules)) {
+          const block = drawOfferBlock({
+            plies: match.moves.length,
+            progressPercent:
+              drawRules.drawOfferMinProgressPercent > 0
+                ? gameProgressPercent(match.gameType, match.draughtsVariant, getRemainingPieces(match).total)
+                : 100,
+            playerId,
+            lastDecline: match.lastDrawDecline,
+            rules: drawRules,
+          });
+          if (block) {
             socket.emit("server_error", {
-              message: `Le match nul peut être proposé à partir de ${drawRules.drawOfferMinProgressPercent} % de la partie (actuellement ${progress} %).`,
+              message:
+                block.kind === "TOO_EARLY"
+                  ? "Le nul peut être proposé une fois que chaque joueur a joué. Avant, utilisez « Quitter » : la partie est annulée."
+                  : block.kind === "PROGRESS"
+                    ? `Le match nul peut être proposé à partir de ${block.minPercent} % de la partie (actuellement ${block.progress} %).`
+                    : `Votre adversaire a refusé le nul : attendez encore ${Math.ceil(block.remainingPlies / 2)} coup(s) avant de le reproposer.`,
             });
             return;
           }
@@ -2522,6 +2582,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
             return;
           }
 
+          match.lastDrawDecline = { byPlayerId: match.drawOfferById, atPly: match.moves.length };
           match.drawOfferById = null;
           publishDrawOffer(match);
         })

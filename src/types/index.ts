@@ -1,4 +1,4 @@
-import type { DrawRules } from "../lib/engine/draw-rules";
+import type { AutoDrawRule, DrawRules } from "../lib/engine/draw-rules";
 export type GameType = "CHESS" | "CHECKERS";
 
 export type MatchmakingStrategy = "RANDOM" | "TARGETED";
@@ -128,6 +128,7 @@ export interface ServerToClientEvents {
     tournamentId?: string | null;
     /** Règles de nullité en vigueur (affichage des compteurs ; le serveur décide). */
     drawRules?: DrawRules;
+    lastDrawDecline?: { byPlayerId: string; atPly: number } | null;
   }) => void;
   move_accepted: (payload: {
     matchId: string;
@@ -141,6 +142,7 @@ export interface ServerToClientEvents {
   draw_offer_updated: (payload: {
     matchId: string;
     offeredByPlayerId: string | null;
+    lastDrawDecline?: { byPlayerId: string; atPly: number } | null;
   }) => void;
   time_proposed: (payload: { matchId: string; minutes: number; by: string }) => void;
   time_accepted: (payload: { matchId: string; minutes: number | null }) => void;
@@ -154,7 +156,9 @@ export interface ServerToClientEvents {
     opponentPointsChange: number;
     opponentPointsBalance: number;
     status: "FINISHED" | "ABANDONED" | "ABORTED";
-    reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT" | "ABORTED" | "NO_SHOW" | "NO_PROGRESS_DRAW";
+    reason: "GAME_OVER" | "DRAW_OFFER" | "RESIGNATION" | "DISCONNECT_FORFEIT" | "TIME_OUT" | "ABORTED" | "NO_SHOW" | "AUTO_DRAW";
+    /** Règle de nullité appliquée automatiquement (répétition, 25 coups, finale, temps vs matériel). */
+    drawRule?: AutoDrawRule | null;
     mode?: GameMode;
     moneyChange?: number;
     moneyStake?: number | null;

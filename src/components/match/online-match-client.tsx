@@ -37,10 +37,13 @@ import {
   type DraughtsPosition,
 } from "@/lib/engine/draughts";
 import {
-  canOfferDrawAt,
-  draughtsQuietState,
+  autoDrawMessage,
+  DEFAULT_DRAW_RULES,
+  draughtsDrawCounters,
+  draughtsDrawState,
+  drawOfferBlock,
   gameProgressPercent,
-  noProgressCounterActive,
+  type AutoDrawRule,
   type DrawRules,
 } from "@/lib/engine/draw-rules";
 import { playPieceMoveSound } from "@/lib/game-feedback";
@@ -86,8 +89,10 @@ interface MatchState {
   betStatus: "PROPOSED" | "ACCEPTED" | "REJECTED" | "COUNTERED" | null;
   betProposedById: string | null;
   drawRules?: DrawRules;
+  lastDrawDecline?: { byPlayerId: string; atPly: number } | null;
+  drawRule?: AutoDrawRule | null;
   finishReason?:
-    | "NO_PROGRESS_DRAW"
+    | "AUTO_DRAW"
     | "GAME_OVER"
     | "DRAW_OFFER"
     | "RESIGNATION"
@@ -296,10 +301,10 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
     socket.on("time_rejected", () => {
       setTimeProposal(null);
     });
-    socket.on("draw_offer_updated", ({ matchId: updatedMatchId, offeredByPlayerId }) => {
+    socket.on("draw_offer_updated", ({ matchId: updatedMatchId, offeredByPlayerId, lastDrawDecline }) => {
       setMatch((current) =>
         current?.matchId === updatedMatchId
-          ? { ...current, drawOfferById: offeredByPlayerId }
+          ? { ...current, drawOfferById: offeredByPlayerId, lastDrawDecline: lastDrawDecline ?? current.lastDrawDecline ?? null }
           : current,
       );
       setPendingAction(false);
@@ -318,6 +323,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
       opponentEloBalance,
       status,
       reason,
+      drawRule,
       mode,
       moneyChange,
       moneyCommission,
@@ -339,6 +345,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               opponentEloBalance,
               drawOfferById: null,
               finishReason: reason,
+              drawRule: drawRule ?? null,
               mode: mode ?? current.mode,
               moneyChange: moneyChange ?? null,
               moneyCommission: moneyCommission ?? null,
@@ -500,34 +507,37 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
     !pendingMove &&
     !pendingAction;
   // Règles de nullité envoyées par le serveur (valeurs par défaut le temps de les recevoir).
-  const drawRules: DrawRules = match?.drawRules ?? {
-    noProgressPlies: 20,
-    noProgressRequiresKing: true,
-    drawOfferMinProgressPercent: 70,
-  };
-  const progressPercent = match
-    ? gameProgressPercent(match.gameType, match.draughtsVariant, remainingPieceCount)
-    : 0;
-  const drawOfferUnlocked = canOfferDrawAt(progressPercent, drawRules);
-  const quietState = useMemo(() => {
-    if (match?.gameType !== "CHECKERS") return null;
+  const drawRules: DrawRules = match?.drawRules ?? DEFAULT_DRAW_RULES;
+  const offerBlock =
+    match && match.status === "IN_PROGRESS"
+      ? drawOfferBlock({
+          plies: match.moves.length,
+          progressPercent: gameProgressPercent(match.gameType, match.draughtsVariant, remainingPieceCount),
+          playerId: match.playerId,
+          lastDecline: match.lastDrawDecline ?? null,
+          rules: drawRules,
+        })
+      : null;
+  // Compteurs officiels (répétition, coups de dames, finales) affichés pendant la partie.
+  const drawCounters = useMemo(() => {
+    if (match?.gameType !== "CHECKERS" || match.status !== "IN_PROGRESS") return [];
+    const variant = match.draughtsVariant ?? "INTERNATIONAL";
     try {
-      return draughtsQuietState(
-        match.draughtsVariant ?? "INTERNATIONAL",
+      const state = draughtsDrawState(
+        variant,
         match.moves.filter(
           (ply): ply is Extract<OnlinePly, { kind: "CHECKERS" }> => ply.kind === "CHECKERS",
         ),
       );
+      return draughtsDrawCounters(variant, state, match.drawRules ?? DEFAULT_DRAW_RULES);
     } catch {
-      return null;
+      return [];
     }
   }, [match]);
-  const quietCounterShown =
-    quietState !== null && noProgressCounterActive(quietState, drawRules) && quietState.quietPlies > 0;
+  const opponentOfferedDraw = !!match?.drawOfferById && match.drawOfferById !== match.playerId;
   const canOfferDraw =
     match?.status === "IN_PROGRESS" &&
-    drawOfferUnlocked &&
-    !match.drawOfferById &&
+    (opponentOfferedDraw || (offerBlock === null && !match.drawOfferById)) &&
     socketConnected &&
     !pendingAction;
 
@@ -823,8 +833,16 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               : "Vous ne vous êtes pas présenté à temps : défaite par forfait."
           : match.finishReason === "DRAW_OFFER"
             ? "La proposition de match nul a été acceptée."
-          : match.finishReason === "NO_PROGRESS_DRAW"
-            ? `Match nul automatique : ${drawRules.noProgressPlies} coups joués sans prise ni nouvelle dame.`
+          : match.drawRule
+            ? autoDrawMessage(match.drawRule, drawRules, match.draughtsVariant)
+          : match.winnerId === null && chessGame?.isGameOver()
+            ? chessGame.isStalemate()
+              ? "Match nul : pat."
+              : chessGame.isInsufficientMaterial()
+                ? "Match nul : matériel insuffisant pour mater."
+                : chessGame.isThreefoldRepetition()
+                  ? "Match nul : la même position s’est répétée trois fois."
+                  : "Match nul : 50 coups sans prise ni mouvement de pion."
             : "Le résultat de la partie a été enregistré côté serveur.";
   const pointsChange =
     typeof match.pointsChange === "number" && Number.isFinite(match.pointsChange)
@@ -857,28 +875,31 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
         disabled={!canOfferDraw}
         onClick={offerDraw}
         title={
-          drawOfferUnlocked
-            ? "Proposer le match nul à votre adversaire"
-            : `Disponible à ${drawRules.drawOfferMinProgressPercent} % de la partie (actuellement ${progressPercent} %)`
+          opponentOfferedDraw
+            ? "Accepter le nul proposé par votre adversaire"
+            : offerBlock?.kind === "TOO_EARLY"
+              ? "Possible une fois que chaque joueur a joué"
+              : offerBlock?.kind === "PROGRESS"
+                ? `Possible à ${offerBlock.minPercent} % de la partie (actuellement ${offerBlock.progress} %)`
+                : offerBlock?.kind === "COOLDOWN"
+                  ? "Votre adversaire vient de refuser le nul"
+                  : "Proposer le match nul à votre adversaire"
         }
-        className="btn btn-ghost relative flex-col gap-0.5 overflow-hidden px-2 py-2 leading-tight"
+        className="btn btn-ghost flex-col gap-0.5 px-2 py-2 leading-tight"
       >
         <span className="flex items-center gap-1.5">
           <Handshake className="size-4 shrink-0" />
-          <span className="text-sm">Nul</span>
+          <span className="text-sm">{match.drawOfferById === match.playerId ? "Nul proposé" : "Proposer nul"}</span>
         </span>
-        {!drawOfferUnlocked && (
-          <>
-            <span className="tabular text-[11px] font-normal text-ink-muted">
-              à {drawRules.drawOfferMinProgressPercent} % · {progressPercent} %
-            </span>
-            <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 bg-line">
-              <span
-                className="block h-full bg-accent/70 transition-[width]"
-                style={{ width: `${Math.min(100, (progressPercent / Math.max(1, drawRules.drawOfferMinProgressPercent)) * 100)}%` }}
-              />
-            </span>
-          </>
+        {offerBlock?.kind === "COOLDOWN" && !opponentOfferedDraw && (
+          <span className="tabular text-[11px] font-normal text-ink-muted">
+            dans {Math.ceil(offerBlock.remainingPlies / 2)} coup{Math.ceil(offerBlock.remainingPlies / 2) > 1 ? "s" : ""}
+          </span>
+        )}
+        {offerBlock?.kind === "PROGRESS" && !opponentOfferedDraw && (
+          <span className="tabular text-[11px] font-normal text-ink-muted">
+            à {offerBlock.minPercent} % · {offerBlock.progress} %
+          </span>
         )}
       </button>
       <button
@@ -903,28 +924,30 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
     </div>
   );
 
-  // Dames : compteur vers le nul automatique (sans prise ni nouvelle dame).
+  // Dames : compteurs officiels vers le nul automatique.
   const quietCounter =
-    match.status === "IN_PROGRESS" && quietCounterShown && quietState ? (
-      <div
-        role="status"
-        className={`card-muted px-3 py-2 text-xs ${
-          quietState.quietPlies >= drawRules.noProgressPlies * 0.75 ? "text-gold" : "text-ink-muted"
-        }`}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <span>Coups sans prise ni nouvelle dame</span>
-          <span className="tabular font-semibold">
-            {quietState.quietPlies}/{drawRules.noProgressPlies}
-          </span>
-        </div>
-        <div aria-hidden="true" className="mt-1.5 h-1 overflow-hidden rounded-full bg-line">
-          <div
-            className="h-full rounded-full bg-gold/70 transition-[width]"
-            style={{ width: `${Math.min(100, (quietState.quietPlies / drawRules.noProgressPlies) * 100)}%` }}
-          />
-        </div>
-        <p className="mt-1">Nul automatique à {drawRules.noProgressPlies} ({drawRules.noProgressPlies / 2} coups chacun).</p>
+    match.status === "IN_PROGRESS" && drawCounters.length > 0 ? (
+      <div role="status" className="card-muted space-y-1.5 px-3 py-2 text-xs text-ink-muted">
+        {drawCounters.map((counter) => {
+          const close = counter.current >= counter.limit * 0.75 || (counter.rule === "REPETITION" && counter.current >= 2);
+          return (
+            <div key={counter.rule} className={close ? "text-gold" : undefined}>
+              <div className="flex items-center justify-between gap-2">
+                <span>{counter.label}</span>
+                <span className="tabular font-semibold">
+                  {counter.current}/{counter.limit}
+                </span>
+              </div>
+              <div aria-hidden="true" className="mt-1 h-1 overflow-hidden rounded-full bg-line">
+                <div
+                  className="h-full rounded-full bg-gold/70 transition-[width]"
+                  style={{ width: `${Math.min(100, (counter.current / counter.limit) * 100)}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+        <p>Match nul automatique à la limite (règlement officiel).</p>
       </div>
     ) : null;
 
