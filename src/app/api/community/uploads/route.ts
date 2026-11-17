@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     const form = await request.formData().catch(() => null);
     const file = form?.get("image");
     if (!(file instanceof File)) throw new CommunityError("Aucune image fournie.", 400);
-    const url = await saveImage(file, { folder: "uploads/community", prefix: user!.id, maxBytes: settings["community.imageMaxKb"] * 1024 });
+    const url = await saveImage(file, { kind: "post", prefix: user!.id, maxBytes: settings["community.imageMaxKb"] * 1024 });
     return { url };
   });
 }
