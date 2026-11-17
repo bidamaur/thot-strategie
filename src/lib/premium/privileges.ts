@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { getSetting } from "@/lib/settings/service";
-import type { PremiumPrivileges, PremiumTier } from "@/lib/settings/registry";
+import { DEFAULT_PREMIUM_TIERS, type PremiumPrivileges, type PremiumTier } from "@/lib/settings/registry";
 
 /**
  * Privilèges Premium — le système existant (isPremium + premiumLevel 1..5)
@@ -52,6 +52,11 @@ const ADMIN_PRIVILEGES: PremiumPrivileges = {
   clubChampionships: true,
   profileThemes: true,
   badge: true,
+  privateRooms: 100,
+  pinInOwnSpaces: true,
+  communityStats: true,
+  maxBulkInvites: 500,
+  clubCustomization: true,
 };
 
 export async function getPrivileges(user: PremiumSubject): Promise<{
@@ -65,7 +70,15 @@ export async function getPrivileges(user: PremiumSubject): Promise<{
   return {
     level: Number.isFinite(level) ? level : tier.level,
     tier,
-    privileges: user.isAdmin ? ADMIN_PRIVILEGES : { ...tierFor(tiers, 0).privileges, ...tier.privileges },
+    // Les privilèges ajoutés après coup (communauté…) prennent la valeur par défaut du niveau
+    // tant que l'administrateur ne les a pas renseignés dans `premium.tiers`.
+    privileges: user.isAdmin
+      ? ADMIN_PRIVILEGES
+      : {
+          ...tierFor(DEFAULT_PREMIUM_TIERS, tier.level).privileges,
+          ...tierFor(tiers, 0).privileges,
+          ...tier.privileges,
+        },
   };
 }
 

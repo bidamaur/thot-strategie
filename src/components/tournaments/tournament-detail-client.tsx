@@ -1,7 +1,8 @@
 "use client";
 
 import { AdSlot } from "@/components/ads/ad-slot";
-import { ArrowLeft, Crown, Flag, Gavel, Play, RefreshCw, Swords, Trophy } from "lucide-react";
+import { ArrowLeft, Crown, Flag, Gavel, Play, RefreshCw, Share2, Swords, Trophy, UserPlus } from "lucide-react";
+import { InviteFriendsDialog } from "@/components/community/dialogs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -100,6 +101,7 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [inviting, setInviting] = useState(false);
 
   const load = useCallback(async () => {
     const response = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}`, { cache: "no-store" });
@@ -301,9 +303,26 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
             </p>
             {tournament.description && <p className="mt-3 max-w-3xl text-sm text-ink-soft">{tournament.description}</p>}
           </div>
-          <button type="button" onClick={() => void load()} className="btn btn-ghost min-h-0 px-3 py-1.5" aria-label="Actualiser">
-            <RefreshCw className="size-4" />
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {viewer && tournament.status === "OPEN" && (tournament.visibility !== "PRIVATE" || viewer.isOrganizer) && (
+              <button type="button" onClick={() => setInviting(true)} className="btn btn-ghost min-h-0 px-3 py-1.5">
+                <UserPlus className="size-4" /> Inviter des amis
+              </button>
+            )}
+            {viewer && tournament.visibility === "PUBLIC" && (
+              <Link
+                href={`/communaute?share=TOURNAMENT&id=${tournament.id}&label=${encodeURIComponent(tournament.name)}`}
+                className="btn btn-ghost min-h-0 px-3 py-1.5"
+                aria-label="Partager dans la communauté"
+                title="Partager dans la communauté"
+              >
+                <Share2 className="size-4" />
+              </Link>
+            )}
+            <button type="button" onClick={() => void load()} className="btn btn-ghost min-h-0 px-3 py-1.5" aria-label="Actualiser">
+              <RefreshCw className="size-4" />
+            </button>
+          </div>
         </div>
         {champion && (
           <p className="mt-4 flex items-center gap-2 rounded-xl border border-gold/30 bg-gold/10 px-4 py-3 text-sm text-gold">
@@ -313,6 +332,9 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
       </header>
 
       {notice && <p className="card-muted px-4 py-3 text-sm text-ink-soft">{notice}</p>}
+      {inviting && (
+        <InviteFriendsDialog kind="tournament" target={tournament.id} title={`Inviter au tournoi « ${tournament.name} »`} onClose={() => setInviting(false)} />
+      )}
 
       {tournament.status === "OPEN" && (
         <EmptyState title="En attente des inscriptions">

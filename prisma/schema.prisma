@@ -10,56 +10,82 @@ datasource db {
 }
 
 model User {
-  id                       String                  @id @default(cuid())
-  email                    String?                 @unique
-  username                 String                  @unique
-  isPremium                Boolean                 @default(false)
-  pointsFree               Float                   @default(0)
-  walletReal               Decimal                 @default(0) @db.Decimal(12, 2)
+  id                        String                        @id @default(cuid())
+  email                     String?                       @unique
+  username                  String                        @unique
+  isPremium                 Boolean                       @default(false)
+  pointsFree                Float                         @default(0)
+  walletReal                Decimal                       @default(0) @db.Decimal(12, 2)
   /// Points argent bloqués (mises en cours) — jamais dépensables directement.
-  walletLocked             Decimal                 @default(0) @db.Decimal(12, 2)
+  walletLocked              Decimal                       @default(0) @db.Decimal(12, 2)
   /// Autorisation explicite (vérification/KYC) pour les parties rémunérées.
-  moneyVerified            Boolean                 @default(false)
-  premiumExpiresAt         DateTime?
-  bio                      String?                 @db.VarChar(280)
-  elo                      Int                     @default(1200)
-  createdAt                DateTime                @default(now())
-  draughtsVariant          DraughtsVariant         @default(INTERNATIONAL)
-  city                     String?                 @db.VarChar(80)
-  country                  String?                 @db.VarChar(80)
-  isAdmin                  Boolean                 @default(false)
-  premiumLevel             Int                     @default(0)
-  neighborhood             String?                 @db.VarChar(80)
-  passwordHash             String?
-  avatar                   String?
-  aiGameRewards            AiGameReward[]
-  walletTransactions       BalanceTransaction[]
-  proposedBets             Match[]                 @relation("MatchBetProposer")
-  proposedGameBets         GameBet[]               @relation("GameBetProposer")
-  opponentGameBets         GameBet[]               @relation("GameBetOpponent")
-  blackMatches             Match[]                 @relation("BlackPlayer")
-  whiteMatches             Match[]                 @relation("WhitePlayer")
-  wonMatches               Match[]                 @relation("MatchWinner")
-  playerRatings            PlayerRating[]
-  ratingHistory            RatingHistory[]
-  gameBetTransactions      GameBetTransaction[]
-  mockPayments             MockPayment[]
-  tournaments              Tournament[]            @relation("TournamentCreator")
-  tournamentInvitations    TournamentInvitation[]
-  tournamentMatchesLost    TournamentMatch[]       @relation("TournamentMatchLoser")
-  tournamentMatchesAsBlack TournamentMatch[]       @relation("TournamentMatchBlack")
-  tournamentMatchesAsWhite TournamentMatch[]       @relation("TournamentMatchWhite")
-  tournamentMatchesWon     TournamentMatch[]       @relation("TournamentMatchWinner")
-  tournamentParticipations TournamentParticipant[]
-  tournamentWallets        TournamentWallet[]
-  tournamentWalletTxs      TournamentWalletTransaction[]
-  tournamentBets           TournamentBet[]
-  tournamentConfigs        TournamentConfig[]
-  sessions                 UserSession[]
-  auditLogs                AuditLog[]
-  clubsOwned               Club[]                  @relation("ClubOwner")
-  clubMemberships          ClubMember[]
-  tournamentStopVotes      TournamentStopVote[]
+  moneyVerified             Boolean                       @default(false)
+  premiumExpiresAt          DateTime?
+  bio                       String?                       @db.VarChar(280)
+  elo                       Int                           @default(1200)
+  createdAt                 DateTime                      @default(now())
+  draughtsVariant           DraughtsVariant               @default(INTERNATIONAL)
+  city                      String?                       @db.VarChar(80)
+  country                   String?                       @db.VarChar(80)
+  isAdmin                   Boolean                       @default(false)
+  premiumLevel              Int                           @default(0)
+  neighborhood              String?                       @db.VarChar(80)
+  passwordHash              String?
+  avatar                    String?
+  aiGameRewards             AiGameReward[]
+  walletTransactions        BalanceTransaction[]
+  proposedBets              Match[]                       @relation("MatchBetProposer")
+  proposedGameBets          GameBet[]                     @relation("GameBetProposer")
+  opponentGameBets          GameBet[]                     @relation("GameBetOpponent")
+  blackMatches              Match[]                       @relation("BlackPlayer")
+  whiteMatches              Match[]                       @relation("WhitePlayer")
+  wonMatches                Match[]                       @relation("MatchWinner")
+  playerRatings             PlayerRating[]
+  ratingHistory             RatingHistory[]
+  gameBetTransactions       GameBetTransaction[]
+  mockPayments              MockPayment[]
+  tournaments               Tournament[]                  @relation("TournamentCreator")
+  tournamentInvitations     TournamentInvitation[]
+  tournamentMatchesLost     TournamentMatch[]             @relation("TournamentMatchLoser")
+  tournamentMatchesAsBlack  TournamentMatch[]             @relation("TournamentMatchBlack")
+  tournamentMatchesAsWhite  TournamentMatch[]             @relation("TournamentMatchWhite")
+  tournamentMatchesWon      TournamentMatch[]             @relation("TournamentMatchWinner")
+  tournamentParticipations  TournamentParticipant[]
+  tournamentWallets         TournamentWallet[]
+  tournamentWalletTxs       TournamentWalletTransaction[]
+  tournamentBets            TournamentBet[]
+  tournamentConfigs         TournamentConfig[]
+  sessions                  UserSession[]
+  auditLogs                 AuditLog[]
+  clubsOwned                Club[]                        @relation("ClubOwner")
+  clubMemberships           ClubMember[]
+  tournamentStopVotes       TournamentStopVote[]
+  /// Communauté : informations visibles publiquement (voir lib/community/privacy.ts).
+  privacySettings           Json?
+  /// Communauté : types de notifications désactivés par le joueur.
+  notificationPrefs         Json?
+  lastSeenAt                DateTime?
+  tournamentInvitationsSent TournamentInvitation[]        @relation("TournamentInviter")
+  friendshipsRequested      Friendship[]                  @relation("FriendshipRequester")
+  friendshipsReceived       Friendship[]                  @relation("FriendshipAddressee")
+  blocksMade                UserBlock[]                   @relation("UserBlocker")
+  blocksReceived            UserBlock[]                   @relation("UserBlocked")
+  communityRoomsOwned       CommunityRoom[]               @relation("CommunityRoomOwner")
+  communityRoomMemberships  CommunityRoomMember[]
+  communityPosts            CommunityPost[]
+  communityComments         CommunityComment[]
+  communityReactions        CommunityReaction[]
+  challengesSent            FriendChallenge[]             @relation("ChallengeChallenger")
+  challengesReceived        FriendChallenge[]             @relation("ChallengeChallenged")
+  notifications             Notification[]                @relation("NotificationRecipient")
+  notificationsSent         Notification[]                @relation("NotificationActor")
+  reportsMade               CommunityReport[]             @relation("ReportReporter")
+  reportsReceived           CommunityReport[]             @relation("ReportTargetUser")
+  reportsResolved           CommunityReport[]             @relation("ReportResolver")
+  sanctions                 CommunitySanction[]           @relation("SanctionUser")
+  sanctionsIssued           CommunitySanction[]           @relation("SanctionIssuer")
+  clubInvitations           ClubInvitation[]              @relation("ClubInvitee")
+  clubInvitationsSent       ClubInvitation[]              @relation("ClubInviter")
 }
 
 model UserSession {
@@ -110,6 +136,7 @@ model Match {
   /// Match de tournoi joué par cette partie (résultat reporté par le serveur).
   tournamentMatchId    String?          @unique
   tournamentMatch      TournamentMatch? @relation(fields: [tournamentMatchId], references: [id], onDelete: SetNull)
+  friendChallenge      FriendChallenge?
   gameBet              GameBet?
   resultRecord         MatchResult?
   ratingHistory        RatingHistory[]
@@ -146,40 +173,40 @@ model PlayerRating {
 }
 
 model RatingHistory {
-  id                    String               @id @default(cuid())
-  userId                String
-  variant               String
-  timeControl           String?
-  oldRating             Int
-  newRating             Int
-  change                Int
-  reason                RatingChangeReason
-  matchId               String?
-  opponentId            String?
-  opponentRatingBefore  Int?
-  createdAt             DateTime             @default(now())
-  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  match                 Match?               @relation(fields: [matchId], references: [id], onDelete: SetNull)
+  id                   String             @id @default(cuid())
+  userId               String
+  variant              String
+  timeControl          String?
+  oldRating            Int
+  newRating            Int
+  change               Int
+  reason               RatingChangeReason
+  matchId              String?
+  opponentId           String?
+  opponentRatingBefore Int?
+  createdAt            DateTime           @default(now())
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  match                Match?             @relation(fields: [matchId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([matchId])
 }
 
 model GameBet {
-  id                String                 @id @default(cuid())
-  matchId           String                 @unique
+  id                String               @id @default(cuid())
+  matchId           String               @unique
   proposerId        String
   opponentId        String
   amount            Int
-  status            BetStatus              @default(PROPOSED)
-  proposedAt        DateTime               @default(now())
+  status            BetStatus            @default(PROPOSED)
+  proposedAt        DateTime             @default(now())
   acceptedAt        DateTime?
   settledAt         DateTime?
   counterProposal   Int?
   counterProposedBy String?
-  match             Match                  @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  proposer          User                   @relation("GameBetProposer", fields: [proposerId], references: [id], onDelete: Cascade)
-  opponent          User                   @relation("GameBetOpponent", fields: [opponentId], references: [id], onDelete: Cascade)
+  match             Match                @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  proposer          User                 @relation("GameBetProposer", fields: [proposerId], references: [id], onDelete: Cascade)
+  opponent          User                 @relation("GameBetOpponent", fields: [opponentId], references: [id], onDelete: Cascade)
   transactions      GameBetTransaction[]
 
   @@index([status])
@@ -200,78 +227,78 @@ model GameBetTransaction {
 }
 
 model MatchResult {
-  id               String    @id @default(cuid())
-  matchId          String    @unique
-  whiteResult      GameResult
-  blackResult      GameResult
+  id                String     @id @default(cuid())
+  matchId           String     @unique
+  whiteResult       GameResult
+  blackResult       GameResult
   whitePointsChange Int
   blackPointsChange Int
-  whiteEloChange   Int
-  blackEloChange   Int
-  betSettled       Boolean   @default(false)
-  settledAt        DateTime?
-  createdAt        DateTime  @default(now())
-  match            Match     @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  whiteEloChange    Int
+  blackEloChange    Int
+  betSettled        Boolean    @default(false)
+  settledAt         DateTime?
+  createdAt         DateTime   @default(now())
+  match             Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
 
   @@index([matchId])
 }
 
 model Tournament {
-  id                   String                  @id @default(cuid())
-  name                 String                  @default("Tournoi communautaire")
-  creatorId            String
-  scope                TournamentScope
-  city                 String?
-  region               String?
-  country              String?
-  continent            String?
-  type                 TournamentType          @default(ELIMINATION)
-  isPaid               Boolean                 @default(false)
-  entryFee             Decimal                 @default(0) @db.Decimal(12, 2)
-  entryPoints          Int                     @default(0)
-  totalPrizePool       Decimal                 @default(0) @db.Decimal(12, 2)
-  maxPlayers           Int
-  status               TournamentStatus        @default(DRAFT)
-  createdAt            DateTime                @default(now())
-  platformFee          Decimal                 @default(0) @db.Decimal(12, 2)
+  id                  String                        @id @default(cuid())
+  name                String                        @default("Tournoi communautaire")
+  creatorId           String
+  scope               TournamentScope
+  city                String?
+  region              String?
+  country             String?
+  continent           String?
+  type                TournamentType                @default(ELIMINATION)
+  isPaid              Boolean                       @default(false)
+  entryFee            Decimal                       @default(0) @db.Decimal(12, 2)
+  entryPoints         Int                           @default(0)
+  totalPrizePool      Decimal                       @default(0) @db.Decimal(12, 2)
+  maxPlayers          Int
+  status              TournamentStatus              @default(DRAFT)
+  createdAt           DateTime                      @default(now())
+  platformFee         Decimal                       @default(0) @db.Decimal(12, 2)
   // Nouveaux champs pour le moteur de tournois
-  gameType             GameType                @default(CHECKERS)
-  draughtsVariant      DraughtsVariant         @default(INTERNATIONAL)
-  timeControlMinutes   Int?
-  minElo               Int?
-  maxElo               Int?
-  minPoints            Int?
-  maxPoints            Int?
-  initialCapital       Int?                    // Capital initial par joueur (Survival Bank)
-  minBet               Int?                    // Mise minimale par match
-  maxBet               Int?                    // Mise maximale par match
-  betMode              TournamentBetMode       @default(FIXED)
-  survivalBankEnabled  Boolean                 @default(false)
-  rebuyEnabled         Boolean                 @default(false)
-  rebuyCost            Int?                    // Coût du rebuy en points
-  maxMatchesPerPlayer  Int?                    // Nombre max de matchs par joueur
-  startedAt            DateTime?
-  finishedAt           DateTime?
-  winnerId             String?
-  configSnapshot       Json?                   // Configuration figée au démarrage
-  visibility           TournamentVisibility    @default(PUBLIC)
-  clubId               String?
-  description          String?                 @db.VarChar(1000)
+  gameType            GameType                      @default(CHECKERS)
+  draughtsVariant     DraughtsVariant               @default(INTERNATIONAL)
+  timeControlMinutes  Int?
+  minElo              Int?
+  maxElo              Int?
+  minPoints           Int?
+  maxPoints           Int?
+  initialCapital      Int? // Capital initial par joueur (Survival Bank)
+  minBet              Int? // Mise minimale par match
+  maxBet              Int? // Mise maximale par match
+  betMode             TournamentBetMode             @default(FIXED)
+  survivalBankEnabled Boolean                       @default(false)
+  rebuyEnabled        Boolean                       @default(false)
+  rebuyCost           Int? // Coût du rebuy en points
+  maxMatchesPerPlayer Int? // Nombre max de matchs par joueur
+  startedAt           DateTime?
+  finishedAt          DateTime?
+  winnerId            String?
+  configSnapshot      Json? // Configuration figée au démarrage
+  visibility          TournamentVisibility          @default(PUBLIC)
+  clubId              String?
+  description         String?                       @db.VarChar(1000)
   /// Survival : durée en jours ; le tournoi s'arrête automatiquement à `endsAt`.
-  durationDays         Int?
+  durationDays        Int?
   /// Arena : durée en minutes.
-  durationMinutes      Int?
-  endsAt               DateTime?
-  stopVotes            TournamentStopVote[]
-  club                 Club?                   @relation(fields: [clubId], references: [id], onDelete: SetNull)
-  creator              User                    @relation("TournamentCreator", fields: [creatorId], references: [id])
-  invitations          TournamentInvitation[]
-  bracketMatches       TournamentMatch[]
-  participants         TournamentParticipant[]
-  wallets              TournamentWallet[]
-  walletTransactions   TournamentWalletTransaction[]
-  tournamentBets       TournamentBet[]
-  rounds               TournamentRound[]
+  durationMinutes     Int?
+  endsAt              DateTime?
+  stopVotes           TournamentStopVote[]
+  club                Club?                         @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  creator             User                          @relation("TournamentCreator", fields: [creatorId], references: [id])
+  invitations         TournamentInvitation[]
+  bracketMatches      TournamentMatch[]
+  participants        TournamentParticipant[]
+  wallets             TournamentWallet[]
+  walletTransactions  TournamentWalletTransaction[]
+  tournamentBets      TournamentBet[]
+  rounds              TournamentRound[]
 
   @@index([status, scope])
   @@index([creatorId])
@@ -288,8 +315,11 @@ model TournamentInvitation {
   status       TournamentInvitationStatus @default(PENDING)
   createdAt    DateTime                   @default(now())
   respondedAt  DateTime?
+  /// Auteur de l'invitation (organisateur ou ami) — null pour les invitations historiques.
+  invitedById  String?
   tournament   Tournament                 @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   user         User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy    User?                      @relation("TournamentInviter", fields: [invitedById], references: [id], onDelete: SetNull)
 
   @@unique([tournamentId, userId])
   @@index([userId, status])
@@ -324,18 +354,18 @@ model BalanceTransaction {
 }
 
 model TournamentParticipant {
-  id           String     @id @default(cuid())
-  tournamentId String
-  userId       String
-  seed         Int
-  placement    Int?
-  status       TournamentParticipantStatus @default(ACTIVE)
-  joinedAt     DateTime   @default(now())
-  eliminatedAt DateTime?
+  id                String                      @id @default(cuid())
+  tournamentId      String
+  userId            String
+  seed              Int
+  placement         Int?
+  status            TournamentParticipantStatus @default(ACTIVE)
+  joinedAt          DateTime                    @default(now())
+  eliminatedAt      DateTime?
   /// Arena : en attente d'un adversaire depuis cette date.
   arenaWaitingSince DateTime?
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  user         User       @relation(fields: [userId], references: [id])
+  tournament        Tournament                  @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user              User                        @relation(fields: [userId], references: [id])
 
   @@unique([tournamentId, userId])
   @@unique([tournamentId, seed])
@@ -345,32 +375,32 @@ model TournamentParticipant {
 }
 
 model TournamentMatch {
-  id            String                @id @default(cuid())
-  tournamentId  String
-  roundId       String?               // Référence vers TournamentRound pour les formats avec rondes
-  stage         TournamentMatchStage  @default(MAIN)
-  round         Int
-  matchNumber   Int
-  playerWhiteId String?
-  playerBlackId String?
-  winnerId      String?
-  loserId       String?
-  status        TournamentMatchStatus @default(WAITING)
-  betAmount     Int?                  // Mise pour ce match (Survival Bank)
-  groupNumber   Int?                  // Phase de groupes : numéro du groupe (1, 2, …)
-  betStatus     BetStatus?            // Statut de la mise
-  betSettled    Boolean               @default(false)
+  id                   String                @id @default(cuid())
+  tournamentId         String
+  roundId              String? // Référence vers TournamentRound pour les formats avec rondes
+  stage                TournamentMatchStage  @default(MAIN)
+  round                Int
+  matchNumber          Int
+  playerWhiteId        String?
+  playerBlackId        String?
+  winnerId             String?
+  loserId              String?
+  status               TournamentMatchStatus @default(WAITING)
+  betAmount            Int? // Mise pour ce match (Survival Bank)
+  groupNumber          Int? // Phase de groupes : numéro du groupe (1, 2, …)
+  betStatus            BetStatus? // Statut de la mise
+  betSettled           Boolean               @default(false)
   whiteRemainingPieces Int?
   blackRemainingPieces Int?
-  createdAt     DateTime              @default(now())
-  completedAt   DateTime?
-  loser         User?                 @relation("TournamentMatchLoser", fields: [loserId], references: [id])
-  playerBlack   User?                 @relation("TournamentMatchBlack", fields: [playerBlackId], references: [id])
-  playerWhite   User?                 @relation("TournamentMatchWhite", fields: [playerWhiteId], references: [id])
-  tournament    Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  winner        User?                 @relation("TournamentMatchWinner", fields: [winnerId], references: [id])
-  roundRef      TournamentRound?      @relation("TournamentRoundMatches", fields: [roundId], references: [id], onDelete: SetNull)
-  games         Match[]
+  createdAt            DateTime              @default(now())
+  completedAt          DateTime?
+  loser                User?                 @relation("TournamentMatchLoser", fields: [loserId], references: [id])
+  playerBlack          User?                 @relation("TournamentMatchBlack", fields: [playerBlackId], references: [id])
+  playerWhite          User?                 @relation("TournamentMatchWhite", fields: [playerWhiteId], references: [id])
+  tournament           Tournament            @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  winner               User?                 @relation("TournamentMatchWinner", fields: [winnerId], references: [id])
+  roundRef             TournamentRound?      @relation("TournamentRoundMatches", fields: [roundId], references: [id], onDelete: SetNull)
+  games                Match[]
 
   @@unique([tournamentId, stage, round, matchNumber])
   @@index([tournamentId, stage, round, status])
@@ -557,42 +587,42 @@ enum TournamentBetMode {
 }
 
 model TournamentConfig {
-  id             String   @id @default(cuid())
-  key            String   @unique
-  value          Json
-  description    String?
-  isEditable     Boolean  @default(true)
-  updatedById    String?
-  updatedBy      User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
-  updatedAt      DateTime @updatedAt
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  description String?
+  isEditable  Boolean  @default(true)
+  updatedById String?
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime @updatedAt
 
   @@index([key])
 }
 
 model TournamentWallet {
-  id             String   @id @default(cuid())
-  tournamentId   String
-  userId         String
-  capital        Int      @default(0)
-  initialCapital Int      @default(0)
-  status         TournamentParticipantStatus @default(ACTIVE)
-  eliminatedAt   DateTime?
-  eliminationRound Int?
+  id                String                      @id @default(cuid())
+  tournamentId      String
+  userId            String
+  capital           Int                         @default(0)
+  initialCapital    Int                         @default(0)
+  status            TournamentParticipantStatus @default(ACTIVE)
+  eliminatedAt      DateTime?
+  eliminationRound  Int?
   eliminationReason String?
-  totalBets      Int      @default(0)
-  totalWon       Int      @default(0)
-  totalLost      Int      @default(0)
-  matchesPlayed  Int      @default(0)
-  matchesWon     Int      @default(0)
-  matchesLost    Int      @default(0)
-  matchesDrawn   Int      @default(0)
-  winStreak      Int      @default(0)
-  bestWinStreak  Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  totalBets         Int                         @default(0)
+  totalWon          Int                         @default(0)
+  totalLost         Int                         @default(0)
+  matchesPlayed     Int                         @default(0)
+  matchesWon        Int                         @default(0)
+  matchesLost       Int                         @default(0)
+  matchesDrawn      Int                         @default(0)
+  winStreak         Int                         @default(0)
+  bestWinStreak     Int                         @default(0)
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tournament   Tournament                    @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user         User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions TournamentWalletTransaction[]
   bets         TournamentBet[]
 
@@ -602,20 +632,20 @@ model TournamentWallet {
 }
 
 model TournamentWalletTransaction {
-  id             String   @id @default(cuid())
-  walletId       String
-  tournamentId   String
-  userId         String
-  type           TournamentWalletTransactionType
-  amount         Int
-  balanceAfter   Int
-  referenceId    String?
-  description    String?
-  createdAt      DateTime @default(now())
+  id           String                          @id @default(cuid())
+  walletId     String
+  tournamentId String
+  userId       String
+  type         TournamentWalletTransactionType
+  amount       Int
+  balanceAfter Int
+  referenceId  String?
+  description  String?
+  createdAt    DateTime                        @default(now())
 
-  wallet   TournamentWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  tournament Tournament     @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet     TournamentWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  tournament Tournament       @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([walletId])
   @@index([tournamentId, createdAt])
@@ -623,22 +653,22 @@ model TournamentWalletTransaction {
 }
 
 model TournamentBet {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   tournamentId  String
   matchId       String
   walletId      String
   userId        String
   amount        Int
   status        BetStatus @default(PROPOSED)
-  proposedAt    DateTime @default(now())
+  proposedAt    DateTime  @default(now())
   acceptedAt    DateTime?
   settledAt     DateTime?
   counterAmount Int?
   counterBy     String?
 
-  tournament Tournament     @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  tournament Tournament       @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   wallet     TournamentWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([tournamentId])
   @@index([matchId])
@@ -646,16 +676,16 @@ model TournamentBet {
 }
 
 model TournamentRound {
-  id             String   @id @default(cuid())
-  tournamentId   String
-  roundNumber    Int
-  stage          String
-  status         String
-  startedAt      DateTime?
-  completedAt    DateTime?
+  id           String    @id @default(cuid())
+  tournamentId String
+  roundNumber  Int
+  stage        String
+  status       String
+  startedAt    DateTime?
+  completedAt  DateTime?
 
-  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  matches      TournamentMatch[] @relation("TournamentRoundMatches")
+  tournament Tournament        @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  matches    TournamentMatch[] @relation("TournamentRoundMatches")
 
   @@unique([tournamentId, roundNumber])
   @@index([tournamentId, status])
@@ -679,20 +709,24 @@ model AuditLog {
 }
 
 model Club {
-  id          String       @id @default(cuid())
-  name        String       @unique @db.VarChar(60)
-  slug        String       @unique @db.VarChar(70)
-  description String?      @db.VarChar(1000)
+  id          String           @id @default(cuid())
+  name        String           @unique @db.VarChar(60)
+  slug        String           @unique @db.VarChar(70)
+  description String?          @db.VarChar(1000)
   ownerId     String
-  country     String?      @db.VarChar(80)
-  city        String?      @db.VarChar(80)
-  accentColor String?      @db.VarChar(9)
-  isPrivate   Boolean      @default(false)
-  maxMembers  Int          @default(50)
-  createdAt   DateTime     @default(now())
-  owner       User         @relation("ClubOwner", fields: [ownerId], references: [id])
+  country     String?          @db.VarChar(80)
+  city        String?          @db.VarChar(80)
+  accentColor String?          @db.VarChar(9)
+  isPrivate   Boolean          @default(false)
+  maxMembers  Int              @default(50)
+  createdAt   DateTime         @default(now())
+  /// Logo du club (fichier image servi depuis /uploads).
+  logo        String?          @db.VarChar(300)
+  owner       User             @relation("ClubOwner", fields: [ownerId], references: [id])
   members     ClubMember[]
   tournaments Tournament[]
+  posts       CommunityPost[]
+  invitations ClubInvitation[]
 
   @@index([ownerId])
   @@index([country, city])
@@ -721,4 +755,314 @@ model ClubMember {
 
   @@unique([clubId, userId])
   @@index([userId])
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Communauté : amitiés, fil, salons, défis, notifications, modération
+// ══════════════════════════════════════════════════════════════════════
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+/// Une seule relation par paire de joueurs (pairKey = "idMin:idMax").
+model Friendship {
+  id                String           @id @default(cuid())
+  requesterId       String
+  addresseeId       String
+  pairKey           String           @unique @db.VarChar(80)
+  status            FriendshipStatus @default(PENDING)
+  requesterFavorite Boolean          @default(false)
+  addresseeFavorite Boolean          @default(false)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  respondedAt       DateTime?
+  requester         User             @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee         User             @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
+}
+
+model UserBlock {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+  blocker   User     @relation("UserBlocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("UserBlocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+enum CommunityRoomVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum CommunityPostPermission {
+  EVERYONE
+  MEMBERS
+  MODERATORS
+}
+
+enum CommunityRoomRole {
+  OWNER
+  MODERATOR
+  MEMBER
+}
+
+/// Salon thématique — sert aussi de catégorie de publication (Général, Échecs, Dames…).
+model CommunityRoom {
+  id              String                  @id @default(cuid())
+  slug            String                  @unique @db.VarChar(60)
+  name            String                  @db.VarChar(60)
+  description     String?                 @db.VarChar(300)
+  icon            String?                 @db.VarChar(20)
+  isActive        Boolean                 @default(true)
+  visibility      CommunityRoomVisibility @default(PUBLIC)
+  postPermission  CommunityPostPermission @default(EVERYONE)
+  commentsEnabled Boolean                 @default(true)
+  sortOrder       Int                     @default(0)
+  ownerId         String?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  owner           User?                   @relation("CommunityRoomOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  members         CommunityRoomMember[]
+  posts           CommunityPost[]
+
+  @@index([isActive, sortOrder])
+  @@index([ownerId])
+}
+
+model CommunityRoomMember {
+  id       String            @id @default(cuid())
+  roomId   String
+  userId   String
+  role     CommunityRoomRole @default(MEMBER)
+  /// Suivre le salon : notification pour les publications importantes (épinglées).
+  follow   Boolean           @default(true)
+  joinedAt DateTime          @default(now())
+  room     CommunityRoom     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([userId])
+}
+
+enum CommunityLinkType {
+  TOURNAMENT
+  CLUB
+}
+
+model CommunityPost {
+  id            String              @id @default(cuid())
+  authorId      String
+  roomId        String?
+  clubId        String?
+  title         String?             @db.VarChar(140)
+  body          String              @db.Text
+  imageUrl      String?             @db.VarChar(300)
+  linkType      CommunityLinkType?
+  linkId        String?             @db.VarChar(40)
+  isPinned      Boolean             @default(false)
+  isHidden      Boolean             @default(false)
+  commentCount  Int                 @default(0)
+  reactionCount Int                 @default(0)
+  editedAt      DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime            @default(now())
+  author        User                @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  room          CommunityRoom?      @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  club          Club?               @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  comments      CommunityComment[]
+  reactions     CommunityReaction[]
+  reports       CommunityReport[]
+
+  @@index([createdAt])
+  @@index([roomId, createdAt])
+  @@index([clubId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+model CommunityComment {
+  id            String              @id @default(cuid())
+  postId        String
+  authorId      String
+  parentId      String?
+  body          String              @db.VarChar(2000)
+  isHidden      Boolean             @default(false)
+  reactionCount Int                 @default(0)
+  replyCount    Int                 @default(0)
+  editedAt      DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime            @default(now())
+  post          CommunityPost       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author        User                @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent        CommunityComment?   @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       CommunityComment[]  @relation("CommentReplies")
+  reactions     CommunityReaction[]
+  reports       CommunityReport[]
+
+  @@index([postId, parentId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+enum CommunityReactionType {
+  LIKE
+  BRAVO
+  INTERESTING
+  CONGRATS
+}
+
+/// Une réaction par joueur et par contenu (changer de réaction remplace la précédente).
+model CommunityReaction {
+  id        String                @id @default(cuid())
+  userId    String
+  postId    String?
+  commentId String?
+  type      CommunityReactionType
+  createdAt DateTime              @default(now())
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      CommunityPost?        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  comment   CommunityComment?     @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@unique([userId, commentId])
+  @@index([postId])
+  @@index([commentId])
+}
+
+enum FriendChallengeStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  CANCELLED
+  COMPLETED
+}
+
+/// Défi direct entre amis : à l'acceptation, une partie classique est créée (même moteur que le reste).
+model FriendChallenge {
+  id                 String                @id @default(cuid())
+  challengerId       String
+  challengedId       String
+  gameType           GameType
+  draughtsVariant    DraughtsVariant?
+  timeControlMinutes Int?
+  mode               MatchMode             @default(CASUAL)
+  /// Mise en points argent par joueur (mode MONEY uniquement, bloquée seulement à l'acceptation).
+  stakeAmount        Int?
+  /// "random", "white" ou "black" (couleur du lanceur du défi).
+  challengerColor    String                @default("random") @db.VarChar(6)
+  message            String?               @db.VarChar(200)
+  status             FriendChallengeStatus @default(PENDING)
+  matchId            String?               @unique
+  expiresAt          DateTime
+  respondedAt        DateTime?
+  createdAt          DateTime              @default(now())
+  challenger         User                  @relation("ChallengeChallenger", fields: [challengerId], references: [id], onDelete: Cascade)
+  challenged         User                  @relation("ChallengeChallenged", fields: [challengedId], references: [id], onDelete: Cascade)
+  match              Match?                @relation(fields: [matchId], references: [id], onDelete: SetNull)
+
+  @@index([challengedId, status])
+  @@index([challengerId, status])
+  @@index([status, expiresAt])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String    @db.VarChar(40)
+  actorId   String?
+  title     String    @db.VarChar(160)
+  body      String?   @db.VarChar(300)
+  link      String?   @db.VarChar(300)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actor     User?     @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
+}
+
+enum CommunityReportTarget {
+  POST
+  COMMENT
+  USER
+}
+
+enum CommunityReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+model CommunityReport {
+  id           String                @id @default(cuid())
+  reporterId   String
+  targetType   CommunityReportTarget
+  postId       String?
+  commentId    String?
+  targetUserId String?
+  reason       String                @db.VarChar(40)
+  details      String?               @db.VarChar(500)
+  status       CommunityReportStatus @default(OPEN)
+  resolvedById String?
+  resolution   String?               @db.VarChar(300)
+  resolvedAt   DateTime?
+  createdAt    DateTime              @default(now())
+  reporter     User                  @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetUser   User?                 @relation("ReportTargetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+  resolvedBy   User?                 @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  post         CommunityPost?        @relation(fields: [postId], references: [id], onDelete: Cascade)
+  comment      CommunityComment?     @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([reporterId, postId])
+  @@unique([reporterId, commentId])
+  @@index([status, createdAt])
+  @@index([targetUserId])
+}
+
+enum CommunitySanctionType {
+  WARNING
+  MUTE
+  SUSPENSION
+}
+
+/// Sanctions communautaires (historique conservé ; levée = revokedAt).
+model CommunitySanction {
+  id         String                @id @default(cuid())
+  userId     String
+  type       CommunitySanctionType
+  reason     String                @db.VarChar(300)
+  issuedById String?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime              @default(now())
+  user       User                  @relation("SanctionUser", fields: [userId], references: [id], onDelete: Cascade)
+  issuedBy   User?                 @relation("SanctionIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, type])
+}
+
+model ClubInvitation {
+  id          String                     @id @default(cuid())
+  clubId      String
+  userId      String
+  invitedById String
+  status      TournamentInvitationStatus @default(PENDING)
+  createdAt   DateTime                   @default(now())
+  respondedAt DateTime?
+  club        Club                       @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user        User                       @relation("ClubInvitee", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy   User                       @relation("ClubInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+
+  @@unique([clubId, userId])
+  @@index([userId, status])
 }

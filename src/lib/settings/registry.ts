@@ -21,6 +21,7 @@ export type SettingCategory =
   | "survival"
   | "premium"
   | "clubs"
+  | "community"
   | "ads";
 
 export const SETTING_CATEGORIES: Record<
@@ -62,6 +63,10 @@ export const SETTING_CATEGORIES: Record<
   clubs: {
     label: "Clubs",
     description: "Création, capacités et permissions des clubs.",
+  },
+  community: {
+    label: "Communauté",
+    description: "Fil, commentaires, amitiés, défis, salons, notifications et modération. Les privilèges Premium communautaires sont dans « Premium ».",
   },
   ads: {
     label: "Publicité",
@@ -108,6 +113,17 @@ export interface PremiumPrivileges {
   badge: boolean;
   /** Navigation sans publicité. */
   adFree?: boolean;
+  // ── Communauté (aucun effet sur le jeu) ──
+  /** Salons privés pouvant être créés et animés. */
+  privateRooms?: number;
+  /** Épingler des publications dans les espaces administrés (club, salon privé). */
+  pinInOwnSpaces?: boolean;
+  /** Statistiques communautaires avancées (portée des publications, activité). */
+  communityStats?: boolean;
+  /** Nombre d'amis invitables en une fois (tournoi, club). */
+  maxBulkInvites?: number;
+  /** Personnalisation de la page de club (logo, couleur). */
+  clubCustomization?: boolean;
 }
 
 export interface PremiumTier {
@@ -144,6 +160,11 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: false,
       profileThemes: false,
       badge: false,
+      privateRooms: 0,
+      pinInOwnSpaces: false,
+      communityStats: false,
+      maxBulkInvites: 5,
+      clubCustomization: false,
     },
   },
   {
@@ -168,6 +189,11 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: false,
       profileThemes: true,
       badge: true,
+      privateRooms: 0,
+      pinInOwnSpaces: true,
+      communityStats: false,
+      maxBulkInvites: 10,
+      clubCustomization: false,
       adFree: true,
     },
   },
@@ -193,6 +219,11 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: true,
       profileThemes: true,
       badge: true,
+      privateRooms: 1,
+      pinInOwnSpaces: true,
+      communityStats: true,
+      maxBulkInvites: 20,
+      clubCustomization: true,
       adFree: true,
     },
   },
@@ -221,6 +252,11 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: true,
       profileThemes: true,
       badge: true,
+      privateRooms: 3,
+      pinInOwnSpaces: true,
+      communityStats: true,
+      maxBulkInvites: 50,
+      clubCustomization: true,
       adFree: true,
     },
   },
@@ -249,6 +285,11 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: true,
       profileThemes: true,
       badge: true,
+      privateRooms: 5,
+      pinInOwnSpaces: true,
+      communityStats: true,
+      maxBulkInvites: 100,
+      clubCustomization: true,
       adFree: true,
     },
   },
@@ -277,6 +318,11 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
       clubChampionships: true,
       profileThemes: true,
       badge: true,
+      privateRooms: 10,
+      pinInOwnSpaces: true,
+      communityStats: true,
+      maxBulkInvites: 200,
+      clubCustomization: true,
       adFree: true,
     },
   },
@@ -406,6 +452,31 @@ export const SETTING_DEFINITIONS = [
 
   // ── Clubs ────────────────────────────────────────────────────────────
   // ── Publicité ────────────────────────────────────────────────────────
+  // ── Communauté ───────────────────────────────────────────────────────
+  { key: "community.enabled", category: "community", type: "boolean", default: true, label: "Espace communautaire actif" },
+  { key: "community.postsEnabled", category: "community", type: "boolean", default: true, label: "Publication autorisée" },
+  { key: "community.postMaxLength", category: "community", type: "number", default: 3000, min: 50, max: 20_000, integer: true, label: "Taille maximale d'une publication", unit: "caractères" },
+  { key: "community.postsPerHour", category: "community", type: "number", default: 10, min: 1, max: 1000, integer: true, label: "Publications maximum par heure et par joueur" },
+  { key: "community.imagesEnabled", category: "community", type: "boolean", default: true, label: "Images dans les publications" },
+  { key: "community.imageMaxKb", category: "community", type: "number", default: 2048, min: 100, max: 10_240, integer: true, label: "Poids maximal d'une image", unit: "Ko" },
+  { key: "community.minAccountAgeHours", category: "community", type: "number", default: 0, min: 0, max: 720, integer: true, label: "Ancienneté du compte requise pour publier", unit: "h", description: "Freine les comptes créés pour spammer. 0 = aucune restriction." },
+  { key: "community.commentsEnabled", category: "community", type: "boolean", default: true, label: "Commentaires autorisés" },
+  { key: "community.commentMaxLength", category: "community", type: "number", default: 1000, min: 20, max: 2000, integer: true, label: "Taille maximale d'un commentaire", unit: "caractères" },
+  { key: "community.commentsPerHour", category: "community", type: "number", default: 60, min: 1, max: 1000, integer: true, label: "Commentaires maximum par heure et par joueur" },
+  { key: "community.commentReactionsEnabled", category: "community", type: "boolean", default: true, label: "Réactions sur les commentaires" },
+  { key: "community.friendRequestsPerDay", category: "community", type: "number", default: 30, min: 1, max: 1000, integer: true, label: "Demandes d'amitié maximum par jour" },
+  { key: "community.friendRequestCooldownDays", category: "community", type: "number", default: 7, min: 0, max: 365, integer: true, label: "Délai avant de redemander après un refus", unit: "jours" },
+  { key: "community.maxFriends", category: "community", type: "number", default: 500, min: 10, max: 10_000, integer: true, label: "Nombre maximum d'amis" },
+  { key: "community.friendRequestMinGames", category: "community", type: "number", default: 0, min: 0, max: 1000, integer: true, label: "Parties jouées requises pour envoyer une demande d'amitié" },
+  { key: "community.challengesEnabled", category: "community", type: "boolean", default: true, label: "Défis entre amis" },
+  { key: "community.challengeExpiryMinutes", category: "community", type: "number", default: 10, min: 1, max: 1440, integer: true, label: "Expiration d'un défi sans réponse", unit: "min" },
+  { key: "community.maxPendingChallenges", category: "community", type: "number", default: 5, min: 1, max: 100, integer: true, label: "Défis en attente maximum par joueur" },
+  { key: "community.challengeMoneyEnabled", category: "community", type: "boolean", default: true, label: "Défis en points argent (si le mode rémunéré est ouvert)" },
+  { key: "community.challengeNonFriends", category: "community", type: "boolean", default: false, label: "Autoriser les défis à des joueurs qui ne sont pas amis" },
+  { key: "community.tournamentInvitesPerDay", category: "community", type: "number", default: 100, min: 1, max: 5000, integer: true, label: "Invitations aux tournois maximum par jour" },
+  { key: "community.privateRoomsEnabled", category: "community", type: "boolean", default: true, label: "Salons privés (selon le niveau Premium)" },
+  { key: "community.disabledNotificationTypes", category: "community", type: "json", default: [], label: "Types de notifications désactivés pour tous", description: "Liste de types : FRIEND_REQUEST, FRIEND_ACCEPTED, POST_COMMENT, COMMENT_REPLY, POST_REACTION, CHALLENGE_RECEIVED, CHALLENGE_ACCEPTED, CHALLENGE_DECLINED, TOURNAMENT_INVITE, CLUB_INVITE, ROOM_PINNED, MODERATION." },
+  { key: "community.reportAutoHideThreshold", category: "community", type: "number", default: 5, min: 0, max: 100, integer: true, label: "Masquage automatique après N signalements distincts", description: "0 = jamais : seul un modérateur masque." },
   { key: "ads.enabled", category: "ads", type: "boolean", default: true, label: "Publicité active" },
   { key: "ads.clientId", category: "ads", type: "string", default: "", maxLength: 40, pattern: "^ca-pub-[0-9]{10,20}$", placeholder: "ca-pub-0000000000000000", label: "Identifiant éditeur AdSense", description: "Format ca-pub-XXXXXXXXXXXXXXXX. Vide = espaces réservés affichés sans annonce." },
   { key: "ads.slots", category: "ads", type: "json", default: { home: "", play: "", tournaments: "", tournament: "", leaderboard: "", clubs: "", wallet: "" }, label: "Identifiants des blocs d'annonces", description: "Un identifiant AdSense (data-ad-slot) par emplacement." },
@@ -431,6 +502,7 @@ export type SettingValue<K extends SettingKey> =
   : K extends "money.stakePresets" ? number[]
   : K extends "ads.slots" ? Record<string, string>
   : K extends "ads.placements" ? string[]
+  : K extends "community.disabledNotificationTypes" ? string[]
   : K extends "allowed_tournament_types" ? string[]
   : K extends "tournament_max_players" ? { min: number; max: number }
   : K extends "tournaments.prizeSplitPercent" ? [number, number, number]
@@ -493,6 +565,12 @@ function validateJsonSetting(
   label: string,
 ): { ok: true; value: unknown } | { ok: false; error: string } {
   if (value === undefined || value === null) return { ok: false, error: `${label} : valeur requise.` };
+  if (key === "community.disabledNotificationTypes") {
+    if (!Array.isArray(value) || !value.every((v) => typeof v === "string" && /^[A-Z_]{3,40}$/.test(v))) {
+      return { ok: false, error: "Liste de types de notification attendue (ex. [\"POST_REACTION\"])." };
+    }
+    return { ok: true, value };
+  }
   if (key === "premium.tiers") {
     if (!Array.isArray(value) || value.length === 0) return { ok: false, error: "Les niveaux Premium doivent être une liste non vide." };
     const levels = new Set<number>();

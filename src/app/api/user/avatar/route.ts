@@ -1,12 +1,9 @@
 import { getRequestUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
-import { writeFile, mkdir } from "node:fs/promises";
-import path from "node:path";
+import { saveImage, UploadError } from "@/lib/uploads";
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
-const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const AVATAR_DIR = path.join(process.cwd(), "public", "avatars");
 
 export async function POST(request: Request): Promise<NextResponse> {
   const currentUser = await getRequestUser(request);
@@ -32,30 +29,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  if (!ALLOWED_TYPES.has(file.type)) {
-    return NextResponse.json(
-      { error: "Format d'image non supporté (JPEG, PNG, WEBP, GIF)." },
-      { status: 400 },
-    );
-  }
-
-  if (file.size > MAX_FILE_SIZE) {
-    return NextResponse.json(
-      { error: "L'image ne doit pas dépasser 2 Mo." },
-      { status: 400 },
-    );
-  }
-
   try {
-    await mkdir(AVATAR_DIR, { recursive: true });
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-    const ext = file.name.split(".").pop() ?? "png";
-    const fileName = `avatar_${currentUser.id}_${Date.now()}.${ext}`;
-    const filePath = path.join(AVATAR_DIR, fileName);
-    await writeFile(filePath, buffer);
-
-    const avatarUrl = `/avatars/${fileName}`;
+    // Type vérifié sur la signature binaire ; extension imposée par le serveur (anti-XSS).
+    const avatarUrl = await saveImage(file, { folder: "avatars", prefix: currentUser.id, maxBytes: MAX_FILE_SIZE });
 
     const user = await prisma.user.update({
       where: { id: currentUser.id },
@@ -65,6 +41,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({ user, avatarUrl });
   } catch (error) {
+    if (error instanceof UploadError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     console.error("Erreur lors de l'upload de l'avatar :", error);
     return NextResponse.json(
       { error: "Impossible d'uploader l'avatar." },

@@ -15,6 +15,7 @@ import { escrowGameBet, InsufficientBetBalanceError } from "../lib/economy/game-
 import { prisma } from "../lib/prisma";
 import { abortMatch, settleMatch } from "../lib/scoring/settle-match";
 import { closeExpiredTimedTournaments, reportTournamentGame } from "../lib/economy/tournaments";
+import { expireChallenges, staleChallengeMatchIds } from "../lib/community/challenges";
 import { withSerializableRetry } from "../lib/db/retry";
 import {
   chessSideCanMate,
@@ -190,6 +191,9 @@ export function attachSocketServer(httpServer: HttpServer): Server {
   });
 
   const connectedPlayers = new Map<string, GameSocket>();
+  // Présence partagée avec les API communautaires (même processus Node).
+  (globalThis as { __thotIsOnline?: (userId: string) => boolean }).__thotIsOnline = (userId) =>
+    connectedPlayers.has(userId);
   const joinedMatchSockets = new Map<string, string>();
   const socketJoinedMatches = new Map<string, string>();
   const matchmaking = new MatchmakingQueue();
@@ -1575,6 +1579,25 @@ export function attachSocketServer(httpServer: HttpServer): Server {
     );
   }, 5 * 60_000);
   survivalTimer.unref?.();
+
+  // Défis entre amis : expiration des défis sans réponse et annulation (sans conséquence)
+  // des parties acceptées que personne n'a commencées.
+  const challengeTimer = setInterval(() => {
+    void (async () => {
+      await expireChallenges();
+      for (const matchId of await staleChallengeMatchIds()) {
+        const active = matches.get(matchId);
+        if (active) {
+          if (active.moves.length === 0 && active.joinedPlayerIds.size < 2) {
+            await finishMatch(active, null, "DISCONNECT_FORFEIT");
+          }
+        } else {
+          await abortMatch(matchId);
+        }
+      }
+    })().catch((error: unknown) => console.error("Nettoyage des défis impossible :", error));
+  }, 60_000);
+  challengeTimer.unref?.();
 
   const onConnection = (socket: GameSocket): void => {
     const { playerId } = socket.data;

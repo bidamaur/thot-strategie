@@ -1,9 +1,12 @@
 "use client";
 
-import { ArrowLeft, Crown, Shield, Trophy, UserMinus } from "lucide-react";
+import { ArrowLeft, Crown, ImagePlus, Share2, Shield, Trophy, UserMinus, UserPlus } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { EmptyState, PageShell } from "@/components/ui/page-header";
+import { useViewer } from "@/components/community/community-hub";
+import { InviteFriendsDialog } from "@/components/community/dialogs";
+import { Feed } from "@/components/community/feed";
 
 interface ClubDetail {
   club: {
@@ -13,6 +16,8 @@ interface ClubDetail {
     city: string | null;
     country: string | null;
     accentColor: string | null;
+    logo: string | null;
+    isPrivate: boolean;
     maxMembers: number;
     owner: { id: string; username: string };
     members: { role: "OWNER" | "ADMIN" | "MEMBER"; joinedAt: string; user: { id: string; username: string; elo: number } }[];
@@ -28,6 +33,8 @@ export function ClubDetailClient({ slug }: { slug: string }) {
   const [data, setData] = useState<ClubDetail | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const viewer = useViewer();
 
   const load = useCallback(() => {
     fetch(`/api/clubs/${encodeURIComponent(slug)}`, { cache: "no-store" })
@@ -68,6 +75,15 @@ export function ClubDetailClient({ slug }: { slug: string }) {
   const { club, ranking, myRole } = data;
   const isManager = myRole === "OWNER" || myRole === "ADMIN";
 
+  async function customize(file: File) {
+    const form = new FormData();
+    form.append("logo", file);
+    const response = await fetch(`/api/clubs/${encodeURIComponent(slug)}/logo`, { method: "POST", body: form });
+    const json = await response.json().catch(() => ({}));
+    if (!response.ok) setError(json.error ?? "Personnalisation impossible.");
+    load();
+  }
+
   return (
     <PageShell width="max-w-5xl">
       <Link href="/clubs" className="inline-flex w-fit items-center gap-1.5 text-sm text-ink-muted hover:text-ink">
@@ -77,7 +93,12 @@ export function ClubDetailClient({ slug }: { slug: string }) {
       <header className="card overflow-hidden">
         <div className="h-20" style={{ background: `linear-gradient(120deg, ${club.accentColor ?? "var(--accent)"}55, transparent)` }} />
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
+          <div className="flex items-start gap-4">
+            {club.logo && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={club.logo} alt="" className="-mt-12 size-20 shrink-0 rounded-2xl border-4 border-surface object-cover" />
+            )}
+            <div>
             <h1 className="text-2xl font-semibold">{club.name}</h1>
             <p className="mt-1 text-sm text-ink-muted">
               Fondé par {club.owner.username}
@@ -85,8 +106,23 @@ export function ClubDetailClient({ slug }: { slug: string }) {
               {` · ${club.members.length}/${club.maxMembers} membres`}
             </p>
             {club.description && <p className="mt-3 max-w-2xl text-sm text-ink-soft">{club.description}</p>}
+            </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {myRole && (!club.isPrivate || isManager) && (
+              <button type="button" onClick={() => setInviting(true)} className="btn btn-ghost"><UserPlus className="size-4" /> Inviter des amis</button>
+            )}
+            {!club.isPrivate && viewer && (
+              <Link href={`/communaute?share=CLUB&id=${club.id}&label=${encodeURIComponent(club.name)}`} className="btn btn-ghost" aria-label="Partager dans la communauté" title="Partager dans la communauté">
+                <Share2 className="size-4" />
+              </Link>
+            )}
+            {myRole === "OWNER" && (
+              <label className="btn btn-ghost cursor-pointer" title="Logo du club (privilège Premium)">
+                <ImagePlus className="size-4" /> Logo
+                <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => e.target.files?.[0] && customize(e.target.files[0])} />
+              </label>
+            )}
             {myRole === null && (
               <button type="button" disabled={busy} onClick={() => act({ action: "join" })} className="btn btn-primary">Rejoindre</button>
             )}
@@ -160,6 +196,20 @@ export function ClubDetailClient({ slug }: { slug: string }) {
           )}
         </section>
       </div>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-base font-semibold">Mur du club</h2>
+        <p className="-mt-2 text-sm text-ink-muted">Annonces, discussions et organisation entre membres{club.isPrivate ? " (visible par les membres seulement)" : ""}.</p>
+        <Feed
+          viewer={viewer ?? null}
+          rooms={[]}
+          club={slug}
+          query={{ club: slug }}
+          showComposer={!!myRole}
+          emptyTitle="Aucune publication sur le mur du club"
+        />
+      </section>
+      {inviting && <InviteFriendsDialog kind="club" target={slug} title={`Inviter dans « ${club.name} »`} onClose={() => setInviting(false)} />}
     </PageShell>
   );
 }

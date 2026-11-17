@@ -35,6 +35,7 @@ import {
   ScrollText,
 } from "lucide-react";
 import { AdminAuditView, AdminSettingsPanel } from "./admin-settings-panel";
+import { AdminCommunity } from "./admin-community";
 
 interface AdminUser {
   id: string;
@@ -85,7 +86,7 @@ interface AdminConfig {
   updatedAt: string;
 }
 
-type View = "dashboard" | "users" | "tournaments" | "config" | "audit";
+type View = "dashboard" | "users" | "tournaments" | "community" | "config" | "audit";
 
 export default function AdminDashboard({ adminUser }: { adminUser: any }) {
   const [view, setView] = useState<View>("dashboard");
@@ -164,6 +165,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
     { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
     { id: "users", label: "Utilisateurs", icon: Users },
     { id: "tournaments", label: "Tournois", icon: Trophy },
+    { id: "community", label: "Communauté", icon: Globe },
     { id: "config", label: "Paramètres", icon: Settings },
     { id: "audit", label: "Journal d’audit", icon: ScrollText },
   ];
@@ -321,6 +323,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
             />
           )}
           {view === "audit" && <AdminAuditView />}
+          {view === "community" && <AdminCommunity />}
           {view === "config" && <AdminSettingsPanel />}
           {view === "config" && (
             <details className="mt-10">

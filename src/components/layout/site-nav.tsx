@@ -7,6 +7,7 @@ import {
   Home,
   LogOut,
   Medal,
+  MessagesSquare,
   Shield,
   Swords,
   Trophy,
@@ -16,6 +17,7 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { NotificationBell } from "./notification-bell";
 
 interface NavUser {
   username: string;
@@ -30,8 +32,9 @@ const LINKS = [
   { href: "/match/en-ligne", label: "Jouer", icon: Gamepad2, mobile: true },
   { href: "/match/ia", label: "Entraînement", icon: Bot, mobile: false },
   { href: "/tournois", label: "Tournois", icon: Trophy, mobile: true },
+  { href: "/communaute", label: "Communauté", icon: MessagesSquare, mobile: true },
   { href: "/clubs", label: "Clubs", icon: Users, mobile: false },
-  { href: "/classements", label: "Classements", icon: Medal, mobile: true },
+  { href: "/classements", label: "Classements", icon: Medal, mobile: false },
   { href: "/premium", label: "Premium", icon: Crown, mobile: false },
   { href: "/portefeuille", label: "Portefeuille", icon: Wallet, mobile: true },
 ] as const;
@@ -115,6 +118,7 @@ export function SiteNav() {
                   <span className="tabular text-ink-muted">{user.elo} ELO</span>
                   <span className="tabular text-ink-muted">{Math.round(user.pointsFree)} pts</span>
                 </span>
+                <NotificationBell paused={inGameRoom} />
                 {user.isAdmin && (
                   <Link href="/admin" className="btn btn-ghost min-h-0 px-2.5 py-1.5" aria-label="Administration">
                     <Shield size={15} />
