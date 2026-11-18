@@ -3,6 +3,7 @@
 import { AdSlot } from "@/components/ads/ad-slot";
 import { ArrowLeft, Crown, Flag, Gavel, Play, RefreshCw, Share2, Swords, Trophy, UserPlus } from "lucide-react";
 import { InviteFriendsDialog } from "@/components/community/dialogs";
+import { busyPlayersFrom, PlayerBusyPanel, type BusyPlayer } from "@/components/match/player-busy-panel";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -101,6 +102,7 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [blocked, setBlocked] = useState<{ match: TournamentMatchRow; players: BusyPlayer[] } | null>(null);
   const [inviting, setInviting] = useState(false);
 
   const load = useCallback(async () => {
@@ -205,10 +207,17 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
       return;
     }
     setBusy(match.id);
+    setBlocked(null);
     const response = await fetch(`/api/tournaments/${tournamentId}/matches/${match.id}/play`, { method: "POST" });
     const json = await response.json().catch(() => ({}));
     setBusy(null);
     if (!response.ok) {
+      const players = busyPlayersFrom(json);
+      if (players) {
+        setNotice("");
+        setBlocked({ match, players });
+        return;
+      }
       setNotice(json.error ?? "Impossible de lancer la partie.");
       return;
     }
@@ -332,6 +341,9 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
       </header>
 
       {notice && <p className="card-muted px-4 py-3 text-sm text-ink-soft">{notice}</p>}
+      {blocked && (
+        <PlayerBusyPanel key={blocked.match.id} busy={blocked.players} onDismiss={() => setBlocked(null)} onRetry={() => void play(blocked.match)} />
+      )}
       {inviting && (
         <InviteFriendsDialog kind="tournament" target={tournament.id} title={`Inviter au tournoi « ${tournament.name} »`} onClose={() => setInviting(false)} />
       )}

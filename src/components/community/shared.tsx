@@ -25,8 +25,20 @@ export async function api<T = Record<string, unknown>>(url: string, init?: Reque
     body: json !== undefined ? JSON.stringify(json) : rest.body,
   });
   const data = (await response.json().catch(() => ({}))) as T & { error?: string };
-  if (!response.ok) throw new Error(data.error ?? "Action impossible pour le moment.");
+  if (!response.ok) throw new ApiError(data.error ?? "Action impossible pour le moment.", response.status, data);
   return data;
+}
+
+/** Erreur d'API avec son corps JSON (ex. code PLAYER_BUSY et joueurs occupés). */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly data: unknown,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
 }
 
 /**

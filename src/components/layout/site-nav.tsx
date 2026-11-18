@@ -11,6 +11,7 @@ import {
   Medal,
   Menu,
   MessagesSquare,
+  Settings2,
   Shield,
   Swords,
   Trophy,
@@ -131,6 +132,9 @@ export function SiteNav() {
                   <span className="tabular text-ink-muted">{Math.round(user.pointsFree)} pts</span>
                 </span>
                 <NotificationBell paused={inGameRoom} />
+                <Link href="/parametres" className="btn btn-ghost hidden min-h-0 px-2.5 py-1.5 lg:inline-flex" aria-label="Paramètres de jeu" title="Paramètres de jeu">
+                  <Settings2 size={15} />
+                </Link>
                 {user.isAdmin && (
                   <Link href="/admin" className="btn btn-ghost min-h-0 px-2.5 py-1.5" aria-label="Administration">
                     <Shield size={15} />
@@ -217,6 +221,16 @@ export function SiteNav() {
                   {label}
                 </Link>
               ))}
+              <Link
+                href="/parametres"
+                role="menuitem"
+                className={`flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl border text-xs ${
+                  isActive(pathname, "/parametres") ? "border-accent/40 bg-accent/10 text-accent" : "border-line bg-surface-2 text-ink-soft"
+                }`}
+              >
+                <Settings2 size={20} />
+                Paramètres
+              </Link>
               <button
                 type="button"
                 role="menuitem"

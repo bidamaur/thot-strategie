@@ -1,4 +1,5 @@
 import { FriendChallengeStatus, MatchMode, MatchStatus, Prisma } from "@/generated/prisma-client";
+import { assertPlayersFree } from "@/lib/game-exit/busy";
 import { withSerializableRetry } from "@/lib/db/retry";
 import { assertCanQueueForMoney, getMoneyRules, lockMoneyMatchStakes, MoneyEligibilityError } from "@/lib/economy/money-matches";
 import { prisma } from "@/lib/prisma";
@@ -240,14 +241,7 @@ export async function respondChallenge(
             data: { status: FriendChallengeStatus.ACCEPTED, respondedAt: new Date() },
           });
           if (claimed.count !== 1) throw new CommunityError("Ce défi n’est plus disponible.", 409);
-          const busy = await tx.match.findFirst({
-            where: {
-              status: MatchStatus.IN_PROGRESS,
-              OR: [{ playerWhiteId: { in: [white, black] } }, { playerBlackId: { in: [white, black] } }],
-            },
-            select: { id: true },
-          });
-          if (busy) throw new CommunityError("Un des deux joueurs a déjà une partie en cours.", 409);
+          await assertPlayersFree(tx, [userId, challenge.challengerId], userId);
           const match = await tx.match.create({
             data: {
               playerWhiteId: white,

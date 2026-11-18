@@ -27,9 +27,10 @@
   --danger: #e19a91;
   --info: #93b6d6;
   --money: #cdb46e;
-  --board-light: #e2e4d2;
-  --board-dark: #7b927f;
-  --board-frame: #26332d;
+  /* Plateau : bois par défaut (thème modifiable par chaque joueur). */
+  --board-light: #ecd3a8;
+  --board-dark: #b07a45;
+  --board-frame: #5b3a1f;
   --focus: #a5d8be;
   color-scheme: dark;
 }
@@ -253,13 +254,26 @@ body {
 
 /* Plateau : ne jamais dépasser la hauteur visible (mobile paysage inclus). */
 .board-fit {
-  width: min(100%, calc(100dvh - 15rem));
+  width: min(100%, calc(100dvh - 17rem));
   min-width: min(100%, 18rem);
 }
 @media (min-width: 1024px) {
   .board-fit {
-    width: min(100%, calc(100dvh - 12.5rem));
+    width: min(100%, calc(100dvh - 11.5rem));
   }
+}
+
+/* Salle de jeu : pas de barre de navigation mobile, donc pas de marge réservée. */
+body:has([data-game-room]) {
+  padding-bottom: 0;
+}
+
+/* Liste de coups horizontale (mobile) sans barre de défilement visible. */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
 }
 
 @keyframes game-confetti-fall {
@@ -288,5 +302,96 @@ body {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Thèmes de plateau (préférence du joueur, attribut sur <html>) ───────── */
+html[data-board-theme="wood"],
+html[data-board-theme="walnut"] {
+  --board-grain-light: linear-gradient(115deg, rgb(255 255 255 / 0.10), transparent 45%, rgb(120 70 20 / 0.06) 75%, transparent),
+    repeating-linear-gradient(92deg, rgb(120 72 30 / 0.05) 0 1px, transparent 1px 6px);
+  --board-grain-dark: linear-gradient(115deg, rgb(255 255 255 / 0.07), transparent 45%, rgb(0 0 0 / 0.08) 75%, transparent),
+    repeating-linear-gradient(92deg, rgb(60 30 5 / 0.09) 0 1px, transparent 1px 5px);
+}
+html[data-board-theme="walnut"] {
+  --board-light: #d8b48c;
+  --board-dark: #7c5133;
+  --board-frame: #3a2416;
+}
+html[data-board-theme="green"] {
+  --board-light: #e2e4d2;
+  --board-dark: #7b927f;
+  --board-frame: #26332d;
+}
+html[data-board-theme="blue"] {
+  --board-light: #dfe5e8;
+  --board-dark: #7f9aab;
+  --board-frame: #2c3b45;
+}
+html[data-board-theme="marble"] {
+  --board-light: #ece9e2;
+  --board-dark: #a29d93;
+  --board-frame: #4a4640;
+  --board-grain-light: radial-gradient(circle at 30% 20%, rgb(255 255 255 / 0.35), transparent 55%);
+  --board-grain-dark: radial-gradient(circle at 70% 80%, rgb(255 255 255 / 0.12), transparent 60%);
+}
+html[data-board-theme="night"] {
+  --board-light: #9e9888;
+  --board-dark: #4f4a3f;
+  --board-frame: #1c1a16;
+}
+.bg-board-light {
+  background-image: var(--board-grain-light, none);
+}
+.bg-board-dark {
+  background-image: var(--board-grain-dark, none);
+}
+html[data-board-coords="off"] .board-coord {
+  display: none;
+}
+
+/* ── Animation des pièces (glisser / porter-déposer) ───────────────────── */
+@keyframes piece-slide {
+  from {
+    transform: translate(calc(var(--dx) * 100%), calc(var(--dy) * 100%));
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes piece-lift {
+  0% {
+    transform: translate(calc(var(--dx) * 100%), calc(var(--dy) * 100%)) scale(1);
+    filter: drop-shadow(0 0 0 rgb(0 0 0 / 0));
+  }
+  22% {
+    transform: translate(calc(var(--dx) * 100%), calc(var(--dy) * 100%)) scale(1.16);
+    filter: drop-shadow(0 10px 8px rgb(0 0 0 / 0.45));
+  }
+  78% {
+    transform: scale(1.16);
+    filter: drop-shadow(0 10px 8px rgb(0 0 0 / 0.45));
+  }
+  100% {
+    transform: none;
+    filter: drop-shadow(0 0 0 rgb(0 0 0 / 0));
+  }
+}
+.piece-anim {
+  z-index: 5;
+  animation-duration: var(--anim-ms, 220ms);
+  animation-fill-mode: backwards;
+}
+.piece-anim-slide {
+  animation-name: piece-slide;
+  animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.piece-anim-lift {
+  animation-name: piece-lift;
+  animation-timing-function: ease-in-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .piece-anim {
+    animation: none;
   }
 }

@@ -46,3 +46,6 @@ next-env.d.ts
 /public/avatars/
 /public/uploads/
 /storage/
+
+# Fichier personnel, ne jamais versionner
+/bordereau de sortie imprimante hp compta.xls

@@ -1145,6 +1145,43 @@ export function attachSocketServer(httpServer: HttpServer): Server {
     }
   };
 
+  /**
+   * Abandon, à la demande explicite du joueur, de toutes ses parties en cours
+   * (bouton « Quitter ma partie » ou demande de sortie acceptée). Même chemin
+   * que l'abandon en partie : annulation sans conséquence avant le seuil de
+   * coups, sinon défaite réglée par settleMatch.
+   */
+  const forfeitPlayerGames = async (playerId: string): Promise<{ ended: number; remaining: number }> => {
+    const where = {
+      status: MatchStatus.IN_PROGRESS,
+      OR: [{ playerWhiteId: playerId }, { playerBlackId: playerId }],
+    };
+    const rows = await prisma.match.findMany({ where, select: { id: true } });
+    let ended = 0;
+    for (const { id } of rows) {
+      const match = await loadMatch(id);
+      if (!match) {
+        // Partie sans adversaire enregistré : simple annulation.
+        if ((await abortMatch(id)).aborted) ended += 1;
+        continue;
+      }
+      // Un coup en cours de validation se termine en quelques millisecondes.
+      for (let attempt = 0; attempt < 40 && match.status === "IN_PROGRESS"; attempt += 1) {
+        if (!match.processingMove && !match.processingAction) {
+          const winnerId = match.playerIds.find((id) => id !== playerId) ?? null;
+          if (await finishMatch(match, winnerId, "RESIGNATION")) {
+            ended += 1;
+            break;
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+    return { ended, remaining: await prisma.match.count({ where }) };
+  };
+  (globalThis as { __thotForfeitPlayerGames?: typeof forfeitPlayerGames }).__thotForfeitPlayerGames =
+    forfeitPlayerGames;
+
   const cancelRematchRequest = (matchId: string, playerId: string): void => {
     const requests = rematchRequests.get(matchId);
     if (!requests?.delete(playerId)) return;

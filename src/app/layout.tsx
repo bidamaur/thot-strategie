@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppExperience } from "@/components/app/app-experience";
+import { BoardPrefsBoot } from "@/components/board/board-prefs-boot";
+import { BOARD_PREFS_BOOT_SCRIPT } from "@/lib/board-prefs";
 import { ActiveMatchBanner } from "@/components/match/active-match-banner";
 import { SiteNav } from "@/components/layout/site-nav";
 import "./globals.css";
@@ -50,12 +52,19 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="fr"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      data-board-theme="wood"
+      suppressHydrationWarning
     >
+      <head>
+        {/* Thème du plateau appliqué avant l'affichage (préférence enregistrée sur l'appareil). */}
+        <script dangerouslySetInnerHTML={{ __html: BOARD_PREFS_BOOT_SCRIPT }} />
+      </head>
       <body className="flex min-h-full flex-col pb-16 lg:pb-0">
         <SiteNav />
         {children}
         <ActiveMatchBanner />
         <AppExperience />
+        <BoardPrefsBoot />
       </body>
     </html>
   );

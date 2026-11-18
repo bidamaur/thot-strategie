@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Play, Search, Shield, Swords, Trophy, X } from "lucid
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { busyPlayersFrom, PlayerBusyPanel, type BusyPlayer } from "@/components/match/player-busy-panel";
 import { EmptyState } from "@/components/ui/page-header";
 import type { PlayerCardData } from "./friends-panel";
 import { api, Avatar, Modal, Notice, Spinner, timeAgo, useLoadEffect } from "./shared";
@@ -96,6 +97,7 @@ export function ClubMatchPage({ matchId }: { matchId: string }) {
   const [data, setData] = useState<ClubMatchData | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<{ tone: "error" | "success"; text: string } | null>(null);
+  const [blocked, setBlocked] = useState<{ body: Record<string, unknown>; players: BusyPlayer[] } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -114,6 +116,7 @@ export function ClubMatchPage({ matchId }: { matchId: string }) {
 
   async function act(body: Record<string, unknown>, success?: string) {
     setNotice(null);
+    setBlocked(null);
     try {
       const result = await api<{ matchId?: string }>(`/api/interclub/${matchId}`, { method: "POST", json: body });
       if (result.matchId) {
@@ -123,7 +126,9 @@ export function ClubMatchPage({ matchId }: { matchId: string }) {
       if (success) setNotice({ tone: "success", text: success });
       await load();
     } catch (e) {
-      setNotice({ tone: "error", text: (e as Error).message });
+      const players = busyPlayersFrom(e);
+      if (players && body.action === "play") setBlocked({ body, players });
+      else setNotice({ tone: "error", text: (e as Error).message });
     }
   }
 
@@ -166,6 +171,9 @@ export function ClubMatchPage({ matchId }: { matchId: string }) {
       </header>
 
       {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
+      {blocked && (
+        <PlayerBusyPanel key={String(blocked.body.boardId)} busy={blocked.players} onDismiss={() => setBlocked(null)} onRetry={() => void act(blocked.body)} />
+      )}
 
       {data.status === "LINEUP" && data.rosters && (data.rosters.home || data.rosters.away) && (
         <div className="grid gap-4 md:grid-cols-2">

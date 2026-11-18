@@ -1,5 +1,6 @@
 import { getRequestUser } from "@/lib/auth/session";
 import { startTournamentGame, TournamentGameError } from "@/lib/economy/tournaments";
+import { PlayerBusyError } from "@/lib/game-exit/busy";
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 
@@ -24,6 +25,9 @@ export async function POST(request: Request, { params }: RouteContext) {
     const game = await startTournamentGame(matchId, currentUser.id);
     return NextResponse.json(game);
   } catch (error) {
+    if (error instanceof PlayerBusyError) {
+      return NextResponse.json(error.toJSON(), { status: error.status });
+    }
     if (error instanceof TournamentGameError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }

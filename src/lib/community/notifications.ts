@@ -23,6 +23,8 @@ export const NOTIFICATION_TYPES = {
   CLUB_MATCH: "Rencontres interclubs de mes clubs",
   ROOM_PINNED: "Publication importante d’un salon suivi",
   MODERATION: "Décisions de modération",
+  GAME_EXIT_REQUEST: "Demande de quitter ma partie en cours",
+  GAME_EXIT_ANSWER: "Réponse à mes demandes de sortie de partie",
 } as const;
 
 export type NotificationType = keyof typeof NOTIFICATION_TYPES;

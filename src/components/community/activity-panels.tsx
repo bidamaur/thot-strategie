@@ -4,6 +4,7 @@ import { Bell, Check, CheckCheck, Coins, Swords, Trophy, Users, X } from "lucide
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { busyPlayersFrom, PlayerBusyPanel, type BusyPlayer } from "@/components/match/player-busy-panel";
 import { EmptyState } from "@/components/ui/page-header";
 import type { PlayerCardData } from "./friends-panel";
 import { api, Avatar, Notice, Spinner, timeAgo, useLoadEffect, type AuthorLike } from "./shared";
@@ -71,6 +72,7 @@ export function ChallengesPanel({ onChanged }: { onChanged?: () => void }) {
   const [invitations, setInvitations] = useState<InvitationsData | null>(null);
   const [notice, setNotice] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<{ challenge: ChallengeData; players: BusyPlayer[] } | null>(null);
 
   const load = useCallback(async () => {
     const [c, i] = await Promise.all([
@@ -94,14 +96,15 @@ export function ChallengesPanel({ onChanged }: { onChanged?: () => void }) {
     return () => window.clearInterval(timer);
   }, [waiting, load]);
 
-  async function respond(c: ChallengeData, action: "accept" | "decline" | "cancel") {
-    let acceptMoney = false;
-    if (action === "accept" && c.mode === "MONEY") {
+  async function respond(c: ChallengeData, action: "accept" | "decline" | "cancel", moneyConfirmed = false) {
+    let acceptMoney = moneyConfirmed;
+    if (action === "accept" && c.mode === "MONEY" && !moneyConfirmed) {
       acceptMoney = window.confirm(`Ce défi engage ${c.stakeAmount} FCFA de vos points argent. Confirmer la mise ?`);
       if (!acceptMoney) return;
     }
     setBusy(c.id);
     setNotice(null);
+    setBlocked(null);
     try {
       const result = await api<{ status: string; matchId?: string | null }>(`/api/community/challenges/${c.id}`, { method: "POST", json: { action, acceptMoney } });
       if (result.matchId) {
@@ -111,7 +114,9 @@ export function ChallengesPanel({ onChanged }: { onChanged?: () => void }) {
       await load();
       onChanged?.();
     } catch (e) {
-      setNotice({ tone: "error", text: (e as Error).message });
+      const players = busyPlayersFrom(e);
+      if (players && action === "accept") setBlocked({ challenge: c, players });
+      else setNotice({ tone: "error", text: (e as Error).message });
     } finally {
       setBusy(null);
     }
@@ -144,6 +149,14 @@ export function ChallengesPanel({ onChanged }: { onChanged?: () => void }) {
   return (
     <div className="space-y-5">
       {notice && <Notice tone={notice.tone}>{notice.text}</Notice>}
+      {blocked && (
+        <PlayerBusyPanel
+          key={blocked.challenge.id}
+          busy={blocked.players}
+          onDismiss={() => setBlocked(null)}
+          onRetry={() => void respond(blocked.challenge, "accept", blocked.challenge.mode === "MONEY")}
+        />
+      )}
 
       <section className="card p-4">
         <h2 className="flex items-center gap-2 text-sm font-semibold"><Swords className="size-4 text-accent" /> Défis reçus</h2>

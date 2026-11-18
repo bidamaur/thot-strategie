@@ -13,6 +13,7 @@ import {
   TournamentStatus,
   TournamentWalletTransactionType,
 } from "@/generated/prisma-client";
+import { assertPlayersFree } from "@/lib/game-exit/busy";
 import { prisma } from "@/lib/prisma";
 import { getSettings } from "@/lib/settings/service";
 import { withSerializableRetry } from "@/lib/db/retry";
@@ -2312,19 +2313,7 @@ export async function startTournamentGame(tournamentMatchId: string, userId: str
           throw new TournamentGameError("Le tournoi est arrivé à son terme : plus aucune nouvelle partie.", 409);
         }
 
-        const busy = await tx.match.findFirst({
-          where: {
-            status: MatchStatus.IN_PROGRESS,
-            OR: [
-              { playerWhiteId: { in: [tm.playerWhiteId, tm.playerBlackId] } },
-              { playerBlackId: { in: [tm.playerWhiteId, tm.playerBlackId] } },
-            ],
-          },
-          select: { id: true },
-        });
-        if (busy) {
-          throw new TournamentGameError("Un des deux joueurs a déjà une partie en cours : terminez-la d’abord.", 409);
-        }
+        await assertPlayersFree(tx, [tm.playerWhiteId, tm.playerBlackId], userId);
 
         const rated = settings["tournaments.gamesRated"];
         const game = await tx.match.create({

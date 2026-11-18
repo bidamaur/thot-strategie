@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRequestUser } from "@/lib/auth/session";
+import { PlayerBusyError } from "@/lib/game-exit/busy";
 import { StorageError } from "@/lib/storage";
 import { UploadError } from "@/lib/uploads";
 import { CommunityError } from "./core";
@@ -24,6 +25,9 @@ export async function communityRoute(
     const result = await handler(user);
     return result instanceof NextResponse ? result : NextResponse.json(result ?? { ok: true });
   } catch (error) {
+    if (error instanceof PlayerBusyError) {
+      return NextResponse.json(error.toJSON(), { status: error.status });
+    }
     if (error instanceof CommunityError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }

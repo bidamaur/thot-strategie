@@ -455,6 +455,9 @@ export const SETTING_DEFINITIONS = [
 
   // ── Parties ──────────────────────────────────────────────────────────
   { key: "match.abortMovesThreshold", category: "match", type: "number", default: 2, min: 0, max: 10, integer: true, label: "Annulation sans conséquence avant N coups", description: "Un abandon/déconnexion avant ce nombre de demi-coups annule la partie (aucun point, ELO ou mise)." },
+  { key: "match.exitRequestsEnabled", category: "match", type: "boolean", default: true, label: "Demandes de sortie de partie", description: "Quand un joueur ne peut pas lancer une partie parce que l’adversaire en a déjà une en cours, il peut lui demander de la quitter. Rien n’est arrêté sans l’accord explicite du joueur concerné." },
+  { key: "match.exitRequestTtlMinutes", category: "match", type: "number", default: 10, min: 2, max: 120, integer: true, label: "Validité d’une demande de sortie", unit: "minutes" },
+  { key: "match.exitRequestsPerHour", category: "match", type: "number", default: 5, min: 1, max: 50, integer: true, label: "Demandes de sortie par joueur et par heure", description: "Limite anti-harcèlement." },
   { key: "match.chatEnabled", category: "match", type: "boolean", default: true, label: "Chat en partie" },
   { key: "match.drawRepetitionEnabled", category: "match", type: "boolean", default: true, label: "Dames : nul par triple répétition", description: "Même position, même joueur au trait, trois fois (FMJD, Lidraughts). Aux échecs, la répétition est toujours appliquée par le moteur." },
   { key: "match.draughtsKingMovesDrawInternational", category: "match", type: "number", default: 25, min: 0, max: 100, integer: true, label: "Dames internationales : nul après N coups chacun avec uniquement des dames", unit: "coups", description: "Règle FMJD des 25 coups : aucune prise, aucun pion joué. 0 désactive." },

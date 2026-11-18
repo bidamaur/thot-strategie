@@ -38,7 +38,7 @@ async function setSetting(key: string, value: unknown) {
   invalidateSettingsCache();
 }
 
-async function user(name: string, extra: Prisma.UserCreateInput | Record<string, unknown> = {}) {
+async function user(name: string, extra: Record<string, unknown> = {}) {
   const u = await prisma.user.create({ data: { username: `${tag}${name}`.slice(0, 24), pointsFree: 100, ...extra } as Prisma.UserCreateInput });
   userIds.push(u.id);
   return u;

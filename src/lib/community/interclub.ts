@@ -1,4 +1,5 @@
 import { ClubMatchStatus, MatchMode, MatchStatus, Prisma } from "@/generated/prisma-client";
+import { assertPlayersFree } from "@/lib/game-exit/busy";
 import { writeAuditLog } from "@/lib/audit";
 import { withSerializableRetry } from "@/lib/db/retry";
 import { prisma } from "@/lib/prisma";
@@ -236,11 +237,7 @@ export async function startBoardGame(userId: string, boardId: string): Promise<{
           if (board.clubMatch.status !== ClubMatchStatus.IN_PROGRESS || board.result) throw new CommunityError("Cette partie n’est plus à jouer.", 409);
           if (board.match?.status === MatchStatus.IN_PROGRESS) return { matchId: board.match.id };
           const players = [board.homePlayerId!, board.awayPlayerId!];
-          const busy = await tx.match.findFirst({
-            where: { status: MatchStatus.IN_PROGRESS, OR: [{ playerWhiteId: { in: players } }, { playerBlackId: { in: players } }] },
-            select: { id: true },
-          });
-          if (busy) throw new CommunityError("Un des deux joueurs a déjà une partie en cours.", 409);
+          await assertPlayersFree(tx, players, userId);
           const [white, black] = board.homeIsWhite ? players : [players[1]!, players[0]!];
           const cm = board.clubMatch;
           const game = await tx.match.create({

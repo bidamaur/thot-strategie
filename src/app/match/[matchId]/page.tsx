@@ -13,7 +13,7 @@ async function MatchContent({ params }: MatchPageProps) {
 
 export default function MatchPage({ params }: MatchPageProps) {
   return (
-    <main className="mx-auto w-full max-w-7xl flex-1 px-3 py-3 text-ink sm:px-6 sm:py-5">
+    <main className="mx-auto w-full max-w-7xl flex-1 px-1.5 py-1.5 text-ink sm:px-6 sm:py-3">
       <h1 className="sr-only">Partie en ligne</h1>
       <Suspense
         fallback={

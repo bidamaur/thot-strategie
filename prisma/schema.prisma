@@ -90,6 +90,10 @@ model User {
   clubInvitationsSent       ClubInvitation[]              @relation("ClubInviter")
   clubMatchesProposed       ClubMatch[]                   @relation("ClubMatchProposer")
   analyticsEvents           AnalyticsEvent[]
+  /// Préférences d'affichage du plateau (thème, animation, manière de jouer).
+  boardPrefs                Json                          @default("{}")
+  exitRequestsSent          GameExitRequest[]             @relation("ExitRequester")
+  exitRequestsReceived      GameExitRequest[]             @relation("ExitTarget")
   clubBoardsHome            ClubMatchBoard[]              @relation("ClubBoardHome")
   clubBoardsAway            ClubMatchBoard[]              @relation("ClubBoardAway")
 }
@@ -1162,4 +1166,24 @@ model AnalyticsEvent {
   @@index([createdAt])
   @@index([userId, createdAt])
   @@index([experiment, variant])
+}
+
+/// Demande faite à un joueur de quitter sa partie en cours pour en lancer une autre.
+/// Acceptée, toutes ses parties en cours sont abandonnées par le serveur de jeu.
+model GameExitRequest {
+  id          String    @id @default(cuid())
+  requesterId String
+  targetId    String
+  /// PENDING | ACCEPTED | DECLINED | CANCELLED | EXPIRED
+  status      String    @default("PENDING") @db.VarChar(12)
+  /// Page interne où le demandeur pourra relancer sa partie.
+  returnPath  String?   @db.VarChar(200)
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+  respondedAt DateTime?
+  requester   User      @relation("ExitRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  target      User      @relation("ExitTarget", fields: [targetId], references: [id], onDelete: Cascade)
+
+  @@index([targetId, status])
+  @@index([requesterId, createdAt])
 }
