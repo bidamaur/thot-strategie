@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Crown } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ANIMATION_SPEEDS,
   animationMs,
@@ -11,6 +11,8 @@ import {
   type BoardPrefs,
 } from "@/lib/board-prefs";
 import { updateBoardPrefs, useBoardPrefs } from "@/lib/client/board-prefs-store";
+import { usePieceMotion, type PlannedMotion } from "./motion-plans";
+import { PieceMotionLayer } from "./piece-motion";
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
@@ -48,59 +50,75 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
   );
 }
 
-/** Aperçu 4×4 : thème, coordonnées, coup possible, dernier coup et animation rejouée. */
+const PREVIEW_DISC =
+  "flex size-[76%] items-center justify-center rounded-full border-2 shadow-[inset_0_-3px_0_rgb(0_0_0/0.18),0_2px_4px_rgb(0_0_0/0.35)]";
+function previewPiece(color: "w" | "b", king = false) {
+  return (
+    <span className={`${PREVIEW_DISC} ${color === "w" ? "border-[#cfc9b6] bg-[#f1ece0] text-zinc-700" : "border-[#14100d] bg-[#2b241f] text-amber-200"}`}>
+      {king && <Crown className="size-1/2" />}
+    </span>
+  );
+}
+
+/**
+ * Aperçu 4×4 : thème, coordonnées, coup possible, dernier coup, et une vraie
+ * prise animée par le même calque que les parties (rejouée en boucle).
+ */
 function Preview({ prefs }: { prefs: BoardPrefs }) {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (prefs.animation === "none") return;
-    const timer = window.setInterval(() => setTick((t) => t + 1), 1600);
+    const timer = window.setInterval(() => setTick((t) => t + 1), 1700);
     return () => window.clearInterval(timer);
   }, [prefs.animation]);
-  const ms = prefs.animation === "lift" ? Math.round(animationMs(prefs) * 1.6) : animationMs(prefs);
-  // Le pion blanc va alternativement de (3,0) à (2,1) puis revient.
-  const forward = tick % 2 === 0;
-  const pawnAt = forward ? "2,1" : "3,0";
-  const from = forward ? { r: 3, c: 0 } : { r: 2, c: 1 };
-  const to = forward ? { r: 2, c: 1 } : { r: 3, c: 0 };
+  // Phase impaire : le pion blanc (3,0) prend le pion noir (2,1) et se pose en (1,2).
+  const captured = tick % 2 === 1;
+  const pieces = useMemo((): Record<string, ReactNode> => ({
+    "0,1": previewPiece("b"),
+    "0,3": previewPiece("b", true),
+    "3,2": previewPiece("w"),
+    ...(captured ? { "1,2": previewPiece("w") } : { "3,0": previewPiece("w"), "2,1": previewPiece("b") }),
+  }), [captured]);
+  const candidate = useMemo((): PlannedMotion | null => captured
+    ? {
+        plan: {
+          id: `apercu-${tick}`,
+          movers: [{ key: "m", path: [{ r: 3, c: 0 }, { r: 1, c: 2 }], node: previewPiece("w") }],
+          captures: [{ key: "x0", at: { r: 2, c: 1 }, step: 0, fraction: 0.5, node: previewPiece("b") }],
+        },
+        hide: ["1,2"],
+        promotionKey: null,
+      }
+    : null, [captured, tick]);
+  const motion = usePieceMotion(candidate, prefs.animation !== "none");
   return (
     <div className="mx-auto w-full max-w-[220px]">
-      <div className="grid aspect-square grid-cols-4 overflow-hidden rounded-md border-[4px] border-board-frame shadow-lg">
+      <div className="relative grid aspect-square grid-cols-4 overflow-hidden rounded-md border-[4px] border-board-frame shadow-lg">
         {Array.from({ length: 16 }, (_, i) => {
           const r = Math.floor(i / 4);
           const c = i % 4;
           const dark = (r + c) % 2 === 1;
           const key = `${r},${c}`;
-          const black = key === "0,1" || key === "0,3" || key === "1,2";
-          const white = key === pawnAt || key === "3,2";
-          const last = prefs.lastMove && (key === `${from.r},${from.c}` || key === `${to.r},${to.c}`);
-          const hint = prefs.legalMoves && key === "2,3";
+          const last = prefs.lastMove && captured && (key === "3,0" || key === "1,2");
+          const hint = prefs.legalMoves && !captured && key === "1,2";
           return (
             <div key={key} className={`relative flex items-center justify-center ${dark ? "bg-board-dark" : "bg-board-light"}`}>
               {last && <span className="absolute inset-0 bg-[rgb(155_199_0/0.38)]" />}
               {hint && <span className="absolute size-[30%] rounded-full bg-accent-strong/70" />}
               {dark && c === 0 && <span className="board-coord absolute left-0.5 top-0 text-[9px] font-semibold text-board-light">{r * 2 + 1}</span>}
-              {(black || white) && (
-                <span
-                  key={key === pawnAt ? `p${tick}` : key}
-                  className={`absolute inset-0 flex items-center justify-center ${key === pawnAt && prefs.animation !== "none" && tick > 0 ? `piece-anim piece-anim-${prefs.animation}` : ""}`}
-                  style={
-                    key === pawnAt
-                      ? ({ "--dx": from.c - to.c, "--dy": from.r - to.r, "--anim-ms": `${ms}ms` } as CSSProperties)
-                      : undefined
-                  }
-                >
-                  <span
-                    className={`flex size-[76%] items-center justify-center rounded-full border-2 shadow-[inset_0_-3px_0_rgb(0_0_0/0.18),0_2px_4px_rgb(0_0_0/0.35)] ${
-                      white ? "border-[#cfc9b6] bg-[#f1ece0] text-zinc-700" : "border-[#14100d] bg-[#2b241f] text-amber-200"
-                    }`}
-                  >
-                    {key === "1,2" && <Crown className="size-1/2" />}
-                  </span>
-                </span>
-              )}
+              {pieces[key] && !motion.isHidden(key) && <span className="absolute inset-0 flex items-center justify-center">{pieces[key]}</span>}
             </div>
           );
         })}
+        {motion.active && (
+          <PieceMotionLayer
+            plan={motion.active.plan}
+            size={4}
+            stepMs={animationMs(prefs)}
+            style={prefs.animation === "lift" ? "lift" : "slide"}
+            onDone={motion.finish}
+          />
+        )}
       </div>
     </div>
   );

@@ -26,13 +26,19 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { io, type Socket } from "socket.io-client";
 import { BoardSettings } from "@/components/board/board-settings";
+import { planChessMove, planDraughtsMove, usePieceMotion, type PlannedMotion } from "@/components/board/motion-plans";
+import { PieceMotionLayer, prefersReducedMotion } from "@/components/board/piece-motion";
 import { Modal } from "@/components/community/shared";
 import { GameResultModal } from "@/components/games/game-result-modal";
+import { DragGhost } from "@/components/games/drag-ghost";
+import { useBoardTouchGuard } from "@/components/games/use-board-touch-guard";
 import { animationMs } from "@/lib/board-prefs";
 import { useBoardPrefs } from "@/lib/client/board-prefs-store";
+import { useVisualViewport } from "@/lib/client/use-visual-viewport";
 import { useBoardPointerDrag } from "@/components/games/use-board-pointer-drag";
 import {
   applyDraughtsMove,
@@ -131,6 +137,21 @@ function replayChess(moves: OnlinePly[]): Chess {
   return game;
 }
 
+// Apparence des pièces : la même pour le plateau et pour le calque d'animation.
+const DRAUGHTS_DISC =
+  "relative flex size-[78%] items-center justify-center rounded-full border-2 shadow-[inset_0_-3px_0_rgb(0_0_0/0.18),0_2px_4px_rgb(0_0_0/0.35)]";
+const draughtsColors = (color: string) =>
+  color === "w" ? "border-[#cfc9b6] bg-[#f1ece0] text-zinc-700" : "border-[#14100d] bg-[#2b241f] text-amber-200";
+const CHESS_GLYPH = "text-[clamp(1.6rem,7.5vw,3.6rem)] leading-none text-zinc-900 drop-shadow-[0_1px_0_rgb(255_255_255/0.25)]";
+
+function renderDraughtsGhost(piece: { color: string; king: boolean }) {
+  return <span className={`${DRAUGHTS_DISC} ${draughtsColors(piece.color)}`}>{piece.king ? <Crown className="size-1/2" /> : null}</span>;
+}
+
+function renderChessGhost(color: "w" | "b", type: string) {
+  return <span className={CHESS_GLYPH}>{CHESS_PIECES[color][type as PieceSymbol]}</span>;
+}
+
 function replayDraughts(
   moves: OnlinePly[],
   variant: "ENGLISH" | "INTERNATIONAL",
@@ -175,6 +196,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
   const [reconnectSeconds, setReconnectSeconds] = useState(0);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const boardPrefs = useBoardPrefs();
+  const boardZoneRef = useBoardTouchGuard();
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Coup joué par glisser : la pièce est déjà à sa place, pas d'animation.
   const [dragMovePly, setDragMovePly] = useState<number | null>(null);
@@ -194,6 +216,17 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
 
   const socketRef = useRef<OnlineSocket | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  const chatViewport = useVisualViewport(chatOpen);
+
+  // Ouverture du chat : rendu immédiat puis curseur dans le champ, dans le même
+  // geste du joueur (condition pour que le clavier s'ouvre sur iPhone).
+  const openChat = useCallback(() => {
+    flushSync(() => setChatOpen(true));
+    chatInputRef.current?.focus({ preventScroll: true });
+    const list = chatContainerRef.current;
+    if (list) list.scrollTop = list.scrollHeight;
+  }, []);
   const betAmountInputRef = useRef<HTMLInputElement | null>(null);
   const counterBetAmountInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -494,6 +527,58 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
         : null,
     [match],
   );
+  // ── Animation du dernier coup validé (affichage seulement) ──
+  // Coups déjà présents à l'ouverture de la partie : jamais rejoués.
+  const [baseline, setBaseline] = useState<{ matchId: string; ply: number } | null>(null);
+  if (match && baseline?.matchId !== match.matchId) {
+    setBaseline({ matchId: match.matchId, ply: match.moves.length });
+  }
+  const draughtsBefore = useMemo(
+    () =>
+      match?.gameType === "CHECKERS" && match.moves.length > 0
+        ? replayDraughts(match.moves.slice(0, -1), match.draughtsVariant ?? "INTERNATIONAL")
+        : null,
+    [match],
+  );
+  const lastChessMove = useMemo(() => chessGame?.history({ verbose: true }).at(-1) ?? null, [chessGame]);
+  const motionCandidate = useMemo((): PlannedMotion | null => {
+    if (!match || !baseline || baseline.matchId !== match.matchId) return null;
+    const ply = match.moves.length;
+    if (ply <= baseline.ply) return null;
+    const id = `${match.matchId}:${ply}`;
+    const instant = dragMovePly === ply;
+    const flip = match.playerColor !== "w";
+    if (match.gameType === "CHESS" && lastChessMove) {
+      return planChessMove({
+        id,
+        instant,
+        move: lastChessMove,
+        renderPiece: renderChessGhost,
+        toDisplay: (square) => {
+          const r = 8 - Number(square[1]);
+          const c = square.charCodeAt(0) - 97;
+          return flip ? { r: 7 - r, c: 7 - c } : { r, c };
+        },
+      });
+    }
+    const ply0 = match.moves.at(-1);
+    if (match.gameType === "CHECKERS" && ply0?.kind === "CHECKERS" && draughtsBefore && draughtsPosition) {
+      const n = draughtsPosition.board.length;
+      return planDraughtsMove({
+        id,
+        instant,
+        move: ply0,
+        before: draughtsBefore,
+        after: draughtsPosition,
+        keyOf: coordinateKey,
+        renderPiece: renderDraughtsGhost,
+        toDisplay: ({ row, col }) => (flip ? { r: n - 1 - row, c: n - 1 - col } : { r: row, c: col }),
+      });
+    }
+    return null;
+  }, [match, baseline, dragMovePly, lastChessMove, draughtsBefore, draughtsPosition]);
+  const motion = usePieceMotion(motionCandidate, boardPrefs.animation !== "none" && !prefersReducedMotion());
+
   const remainingPieceCount =
     match?.gameType === "CHESS"
       ? chessGame?.board().flat().filter(Boolean).length ?? 0
@@ -870,40 +955,18 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
         ? "Points non disponibles"
         : `${pointsChange > 0 ? "+" : ""}${pointsChange} point${Math.abs(pointsChange) === 1 ? "" : "s"}`;
 
-  // Dernier coup : surbrillance et animation (préférences du joueur).
+  // Dernier coup : surbrillance (préférence du joueur).
   const boardSize = match.gameType === "CHESS" ? 8 : draughtsPosition?.board.length ?? 10;
   const plyCount = match.moves.length;
   const lastPly = match.moves.at(-1);
-  const toDisplay = (row: number, col: number) =>
-    match.playerColor === "w" ? { r: row, c: col } : { r: boardSize - 1 - row, c: boardSize - 1 - col };
-  const chessCoords = (square: string) => ({ row: 8 - Number(square[1]), col: square.charCodeAt(0) - 97 });
   let lastFrom: string | null = null;
   let lastTo: string | null = null;
-  let fromRC: { row: number; col: number } | null = null;
-  let toRC: { row: number; col: number } | null = null;
   if (lastPly?.kind === "CHESS") {
     lastFrom = lastPly.from;
     lastTo = lastPly.to;
-    fromRC = chessCoords(lastPly.from);
-    toRC = chessCoords(lastPly.to);
   } else if (lastPly?.kind === "CHECKERS") {
-    const end = lastPly.path[lastPly.path.length - 1]!;
     lastFrom = coordinateKey(lastPly.from);
-    lastTo = coordinateKey(end);
-    fromRC = lastPly.from;
-    toRC = end;
-  }
-  const baseAnimMs = animationMs(boardPrefs);
-  const animMs = boardPrefs.animation === "lift" ? Math.round(baseAnimMs * 1.6) : baseAnimMs;
-  let anim: { to: string; className: string; style: CSSProperties } | null = null;
-  if (animMs > 0 && fromRC && toRC && lastTo && dragMovePly !== plyCount) {
-    const f = toDisplay(fromRC.row, fromRC.col);
-    const t = toDisplay(toRC.row, toRC.col);
-    anim = {
-      to: lastTo,
-      className: `piece-anim piece-anim-${boardPrefs.animation}`,
-      style: { "--dx": f.c - t.c, "--dy": f.r - t.r, "--anim-ms": `${animMs}ms` } as CSSProperties,
-    };
+    lastTo = coordinateKey(lastPly.path[lastPly.path.length - 1]!);
   }
   const isLastSquare = (key: string) => boardPrefs.lastMove && (key === lastFrom || key === lastTo);
 
@@ -975,7 +1038,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
         {leavingMatch ? "…" : "Quitter"}
       </button>
       {chatAvailable && (
-        <button type="button" onClick={() => setChatOpen(true)} className={`${toolbarButton} relative text-ink-soft hover:bg-surface-2 lg:hidden`}>
+        <button type="button" onClick={openChat} className={`${toolbarButton} relative text-ink-soft hover:bg-surface-2 lg:hidden`}>
           <MessageCircle className="size-5" />
           Chat
           {chatMessages.length > 0 && (
@@ -1112,7 +1175,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
   };
 
   return (
-    <div data-game-room className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+    <div data-game-room className="game-no-select grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
       {/* ── Colonne plateau ───────────────────────────────────────── */}
       <section className="flex min-h-[calc(100dvh-4.75rem-env(safe-area-inset-top))] min-w-0 flex-col items-center gap-1.5 animate-fade-in sm:gap-2 lg:min-h-0">
         {/* Mobile : bandeau d'informations sur une ligne + coups en défilement horizontal. */}
@@ -1159,7 +1222,8 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
 
         <div className="board-fit relative">
           <div
-            className="grid aspect-square w-full overflow-hidden rounded-md border-[3px] border-board-frame shadow-[0_24px_60px_-28px_rgb(0_0_0/0.8)] sm:rounded-xl sm:border-[6px]"
+            ref={boardZoneRef}
+            className="board-touch-zone relative grid aspect-square w-full overflow-hidden rounded-md border-[3px] border-board-frame shadow-[0_24px_60px_-28px_rgb(0_0_0/0.8)] sm:rounded-xl sm:border-[6px]"
             style={{
               gridTemplateColumns: `repeat(${match.gameType === "CHESS" ? 8 : draughtsPosition?.board.length ?? 10}, minmax(0, 1fr))`,
             }}
@@ -1198,7 +1262,6 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                       light ? "bg-board-light text-zinc-900" : "bg-board-dark text-zinc-900",
                       isLast ? "after:absolute after:inset-0 after:bg-[rgb(155_199_0/0.38)]" : "",
                       isSelected ? "ring-4 ring-inset ring-accent-strong" : "",
-                      drag?.from === square ? "opacity-0" : "",
                     ].join(" ")}
                   >
                     {boardPrefs.legalMoves && isDestination && (
@@ -1207,13 +1270,16 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                         className={`absolute z-[1] rounded-full ${piece ? "inset-1 border-4 border-zinc-900/25" : "size-[28%] bg-zinc-900/25"}`}
                       />
                     )}
-                    {piece && (
+                    {piece && !motion.isHidden(square) && (
                       <span
-                        key={anim?.to === square ? `a${plyCount}` : "p"}
-                        className={`absolute inset-0 z-[2] flex items-center justify-center ${anim?.to === square ? anim.className : ""}`}
-                        style={anim?.to === square ? anim.style : undefined}
+                        key={motion.promotionKey === square ? `promo${plyCount}` : "p"}
+                        className={`absolute inset-0 z-[2] flex items-center justify-center ${drag?.from === square ? "opacity-0" : ""}`}
                       >
-                        <span className="drop-shadow-[0_1px_0_rgb(255_255_255/0.25)]">{CHESS_PIECES[piece.color][piece.type]}</span>
+                        <span
+                          className={`piece-base piece-glyph ${CHESS_GLYPH} ${isSelected ? "piece-selected" : ""} ${motion.promotionKey === square ? "piece-promote" : ""}`}
+                        >
+                          {CHESS_PIECES[piece.color][piece.type]}
+                        </span>
                       </span>
                     )}
                     {displayCol === 0 && (
@@ -1269,7 +1335,6 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                         playable ? "bg-board-dark" : "bg-board-light",
                         selected ? "ring-4 ring-inset ring-accent-strong" : "",
                         isLastSquare(key) ? "after:absolute after:inset-0 after:bg-[rgb(155_199_0/0.38)]" : "",
-                        drag?.from === key ? "opacity-0" : "",
                       ].join(" ")}
                     >
                       {playable && (
@@ -1280,29 +1345,37 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                       {boardPrefs.legalMoves && isDestination && (
                         <span aria-hidden="true" className="absolute z-[1] size-[30%] rounded-full bg-accent-strong/70" />
                       )}
-                      {piece && (
+                      {piece && !motion.isHidden(key) && (
                         <span
-                          key={anim?.to === key ? `a${plyCount}` : "p"}
-                          className={`absolute inset-0 z-[2] flex items-center justify-center ${anim?.to === key ? anim.className : ""}`}
-                          style={anim?.to === key ? anim.style : undefined}
+                          key={motion.promotionKey === key ? `promo${plyCount}` : "p"}
+                          className={`absolute inset-0 z-[2] flex items-center justify-center ${drag?.from === key ? "opacity-0" : ""}`}
                         >
-                        <span
-                          className={[
-                            "relative flex size-[78%] items-center justify-center rounded-full border-2 shadow-[inset_0_-3px_0_rgb(0_0_0/0.18),0_2px_4px_rgb(0_0_0/0.35)]",
-                            piece.color === "w"
-                              ? "border-[#cfc9b6] bg-[#f1ece0] text-zinc-700"
-                              : "border-[#14100d] bg-[#2b241f] text-amber-200",
-                            boardPrefs.legalMoves && canMoveFrom && !selected ? "ring-2 ring-accent/60" : "",
-                          ].join(" ")}
-                        >
-                          {piece.king ? <Crown className="size-1/2" /> : null}
-                        </span>
+                          <span
+                            className={[
+                              DRAUGHTS_DISC,
+                              draughtsColors(piece.color),
+                              "piece-base piece-disc",
+                              selected ? "piece-selected" : "",
+                              boardPrefs.legalMoves && canMoveFrom && !selected ? "ring-2 ring-accent/60" : "",
+                            ].join(" ")}
+                          >
+                            {piece.king ? <Crown className={`size-1/2 ${motion.promotionKey === key ? "crown-appear" : ""}`} /> : null}
+                          </span>
                         </span>
                       )}
                     </button>
                   );
                 }),
               )}
+            {motion.active && (
+              <PieceMotionLayer
+                plan={motion.active.plan}
+                size={boardSize}
+                stepMs={animationMs(boardPrefs)}
+                style={boardPrefs.animation === "lift" ? "lift" : "slide"}
+                onDone={motion.finish}
+              />
+            )}
           </div>
         </div>
 
@@ -1349,26 +1422,11 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
           </div>
         )}
 
-        {drag &&
-          (match.gameType === "CHECKERS" ? (
-            <span
-              aria-hidden="true"
-              className={`pointer-events-none fixed z-[80] flex size-[min(12vw,4.5rem)] -translate-x-1/2 -translate-y-1/2 scale-110 items-center justify-center rounded-full border-2 shadow-[inset_0_-3px_0_rgb(0_0_0/0.18),0_12px_18px_rgb(0_0_0/0.45)] ${
-                match.playerColor === "w" ? "border-[#cfc9b6] bg-[#f1ece0] text-zinc-700" : "border-[#14100d] bg-[#2b241f] text-amber-200"
-              }`}
-              style={{ left: drag.x, top: drag.y }}
-            >
-              {drag.piece === "♛" && <Crown className="size-1/2" />}
-            </span>
-          ) : (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none fixed z-[80] flex size-12 -translate-x-1/2 -translate-y-1/2 scale-110 items-center justify-center text-5xl drop-shadow-xl"
-              style={{ left: drag.x, top: drag.y }}
-            >
-              {drag.piece}
-            </span>
-          ))}
+        <DragGhost drag={drag}>
+          {match.gameType === "CHECKERS"
+            ? renderDraughtsGhost({ color: match.playerColor, king: drag?.piece === "♛" })
+            : <span className={CHESS_GLYPH}>{drag?.piece}</span>}
+        </DragGhost>
       </section>
 
       {/* ── Panneau latéral : informations secondaires ────────────── */}
@@ -1562,7 +1620,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               <p className="eyebrow flex items-center gap-1.5">
                 <MessageCircle className="size-3.5" /> Chat
               </p>
-              <button type="button" onClick={() => setChatOpen(true)} className="text-xs text-ink-muted hover:text-ink">
+              <button type="button" onClick={openChat} className="text-xs text-ink-muted hover:text-ink">
                 Agrandir
               </button>
             </div>
@@ -1611,9 +1669,14 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
       </aside>
 
       {chatOpen && chatAvailable && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/70 backdrop-blur-sm animate-fade-in sm:items-center sm:p-4" onClick={() => setChatOpen(false)}>
+        <div
+          className={`fixed inset-x-0 z-[60] flex items-end justify-center bg-black/70 backdrop-blur-sm animate-fade-in sm:items-center sm:p-4 ${chatViewport ? "" : "top-0 h-dvh"}`}
+          // Toujours au-dessus du clavier : la fenêtre suit la zone visible de l'écran.
+          style={chatViewport ? { top: chatViewport.top, height: chatViewport.height } : undefined}
+          onClick={() => setChatOpen(false)}
+        >
           <section
-            className="card flex max-h-[80dvh] w-full max-w-lg flex-col rounded-b-none p-5 animate-rise sm:rounded-b-[var(--radius-card)]"
+            className="card flex max-h-[min(80dvh,calc(100%-0.5rem))] w-full max-w-lg flex-col rounded-b-none p-4 animate-rise sm:rounded-b-[var(--radius-card)] sm:p-5"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
@@ -1622,7 +1685,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                 <X className="size-5" />
               </button>
             </div>
-            <div ref={chatContainerRef} className="mb-3 min-h-[30dvh] flex-1 space-y-2 overflow-y-auto pr-1">
+            <div ref={chatContainerRef} className="mb-2 min-h-16 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1">
               {chatMessages.length === 0 ? (
                 <p className="text-center text-xs text-ink-muted">Aucun message pour l’instant.</p>
               ) : (
@@ -1644,13 +1707,18 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                 ))
               )}
             </div>
-            <div className="mb-2 flex flex-wrap gap-1">
+            <div className="scrollbar-none mb-2 flex gap-1 overflow-x-auto">
               {["👍", "👏", "😄", "😮", "🤝", "🔥", "😅", "🙏"].map((emoji) => (
                 <button
                   key={emoji}
                   type="button"
-                  onClick={() => setChatInput((prev) => prev + emoji)}
-                  className="rounded-lg px-1.5 py-0.5 text-lg hover:bg-surface-3"
+                  // Garde le curseur (et le clavier) dans le champ de saisie.
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setChatInput((prev) => prev + emoji);
+                    chatInputRef.current?.focus({ preventScroll: true });
+                  }}
+                  className="shrink-0 rounded-lg px-1.5 py-0.5 text-lg hover:bg-surface-3"
                 >
                   {emoji}
                 </button>
@@ -1664,16 +1732,26 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               }}
             >
               <input
+                ref={chatInputRef}
                 type="text"
                 value={chatInput}
                 maxLength={500}
                 onChange={(e) => setChatInput(e.target.value)}
                 placeholder="Écrire un message…"
-                className="field"
+                // 16 px : évite le zoom automatique de l'iPhone à la saisie.
+                className="field text-base"
+                enterKeyHint="send"
+                autoComplete="off"
                 disabled={!socketConnected}
-                autoFocus
               />
-              <button type="submit" disabled={!chatInput.trim() || !socketConnected} className="btn btn-primary shrink-0" aria-label="Envoyer">
+              <button
+                type="submit"
+                disabled={!chatInput.trim() || !socketConnected}
+                // Envoyer sans fermer le clavier : le champ garde le curseur.
+                onPointerDown={(event) => event.preventDefault()}
+                className="btn btn-primary shrink-0"
+                aria-label="Envoyer"
+              >
                 <Send className="size-4" />
               </button>
             </form>

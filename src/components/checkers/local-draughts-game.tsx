@@ -20,14 +20,16 @@ import {
   type DraughtsPosition,
 } from "@/lib/engine/draughts";
 import { requestComputerMove } from "@/lib/game-ai-client";
-import {
-  animateOpponentMove,
-  playPieceMoveSound,
-  waitForOpponent,
-} from "@/lib/game-feedback";
+import { playPieceMoveSound, waitForOpponent } from "@/lib/game-feedback";
+import { planDraughtsMove, usePieceMotion } from "@/components/board/motion-plans";
+import { PieceMotionLayer, prefersReducedMotion } from "@/components/board/piece-motion";
+import { animationMs } from "@/lib/board-prefs";
+import { getBoardPrefs, useBoardPrefs } from "@/lib/client/board-prefs-store";
 import { DifficultySelector } from "@/components/games/difficulty-selector";
 import { GameResultModal } from "@/components/games/game-result-modal";
 import { useBoardPointerDrag } from "@/components/games/use-board-pointer-drag";
+import { DragGhost } from "@/components/games/drag-ghost";
+import { useBoardTouchGuard } from "@/components/games/use-board-touch-guard";
 
 interface LocalDraughtsGameProps {
   initialDifficulty: Difficulty;
@@ -37,6 +39,24 @@ interface LocalDraughtsGameProps {
 interface LastMove {
   from: DraughtsCoordinate;
   to: DraughtsCoordinate;
+  /** Coup complet et positions avant/après : servent uniquement à l'animation. */
+  move: DraughtsMove;
+  before: DraughtsPosition;
+  after: DraughtsPosition;
+  seq: number;
+  /** Coup posé au glisser : pas de trajet à rejouer. */
+  instant: boolean;
+}
+
+// Apparence des pions : identique sur le plateau et dans le calque d'animation.
+const pieceClasses = (color: string) =>
+  `flex size-[76%] items-center justify-center rounded-full border-[3px] shadow-lg sm:border-4 ${
+    color === "w" ? "border-[#eef0dc] bg-[#f7f5e9] shadow-black/25" : "border-line bg-surface-3 shadow-black/55"
+  }`;
+const crownClasses = (color: string) => (color === "w" ? "size-1/2 text-board-dark" : "size-1/2 text-amber-200");
+
+function renderPieceGhost(piece: { color: string; king: boolean }) {
+  return <span className={pieceClasses(piece.color)}>{piece.king && <Crown className={crownClasses(piece.color)} />}</span>;
 }
 
 function squareKey(square: DraughtsCoordinate): string {
@@ -87,9 +107,9 @@ export function LocalDraughtsGame({
   const [history, setHistory] = useState<string[]>([]);
   const [lastMove, setLastMove] = useState<LastMove | null>(null);
   const [engineError, setEngineError] = useState("");
-  const [opponentMovingFrom, setOpponentMovingFrom] =
-    useState<DraughtsCoordinate | null>(null);
-  const boardRef = useRef<HTMLDivElement>(null);
+  const boardPrefs = useBoardPrefs();
+  const moveSeqRef = useRef(0);
+  const boardZoneRef = useBoardTouchGuard();
 
   const legalMoves = useMemo(
     () => getLegalDraughtsMoves(position),
@@ -109,11 +129,13 @@ export function LocalDraughtsGame({
     }),
   );
 
-  const playMove = useCallback((move: DraughtsMove) => {
+  const playMove = useCallback((move: DraughtsMove, instant = false) => {
     const destination = moveDestination(move);
     if (!destination) return;
-    setPosition(applyDraughtsMove(position, move));
-    setLastMove({ from: move.from, to: destination });
+    const after = applyDraughtsMove(position, move);
+    moveSeqRef.current += 1;
+    setPosition(after);
+    setLastMove({ from: move.from, to: destination, move, before: position, after, seq: moveSeqRef.current, instant });
     setHistory((previous) => [...previous, notation(move)]);
     playPieceMoveSound();
     setSelectedSquare(null);
@@ -129,7 +151,7 @@ export function LocalDraughtsGame({
           endsAt(candidate, to),
       );
       if (move) {
-        playMove(move);
+        playMove(move, true);
         return;
       }
 
@@ -167,31 +189,16 @@ export function LocalDraughtsGame({
         if (!(await waitForOpponent(550 + Math.random() * 550, controller.signal))) {
           return;
         }
-        setOpponentMovingFrom(move.from);
-        let from = move.from;
-        for (const step of move.path) {
-          const moved = await animateOpponentMove(
-            boardRef.current,
-            squareKey(from),
-            squareKey(step),
-            move.path.length && position.board[move.from.row]?.[move.from.col]?.king
-              ? "♛"
-              : "●",
-            300 + Math.random() * 150,
-            controller.signal,
-          );
-          if (!moved || cancelled) {
-            if (!cancelled) setOpponentMovingFrom(null);
-            return;
-          }
-          playPieceMoveSound();
-          from = step;
-        }
+        if (cancelled) return;
+        moveSeqRef.current += 1;
         setPosition(nextPosition);
-        setLastMove({ from: move.from, to: destination });
+        setLastMove({ from: move.from, to: destination, move, before: position, after: nextPosition, seq: moveSeqRef.current, instant: false });
         setHistory((previous) => [...previous, notation(move)]);
-        setOpponentMovingFrom(null);
         setEngineError("");
+        // Un son par saut, au rythme de l'animation (comme auparavant).
+        for (let hop = 0; hop < move.path.length; hop += 1) {
+          window.setTimeout(playPieceMoveSound, (hop + 1) * animationMs(getBoardPrefs()));
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -236,12 +243,28 @@ export function LocalDraughtsGame({
     setLastMove(null);
     setSelectedSquare(null);
     setEngineError("");
-    setOpponentMovingFrom(null);
   }
 
   const boardSize = position.board.length;
+  const motionCandidate = useMemo(
+    () =>
+      lastMove
+        ? planDraughtsMove({
+            id: `ia:${lastMove.seq}`,
+            instant: lastMove.instant,
+            move: lastMove.move,
+            before: lastMove.before,
+            after: lastMove.after,
+            keyOf: squareKey,
+            renderPiece: renderPieceGhost,
+            toDisplay: ({ row, col }) => ({ r: row, c: col }),
+          })
+        : null,
+    [lastMove],
+  );
+  const motion = usePieceMotion(motionCandidate, boardPrefs.animation !== "none" && !prefersReducedMotion());
   return (
-    <main className="relative min-h-screen overflow-hidden bg-canvas text-ink">
+    <main className="game-no-select relative min-h-screen overflow-hidden bg-canvas text-ink">
       <div className="pointer-events-none absolute -left-40 top-[-18rem] h-[38rem] w-[38rem] rounded-full bg-emerald-500/10 blur-[130px]" />
       <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 pb-10 sm:px-8">
         <header className="flex items-center justify-between border-b border-white/10 py-5">
@@ -314,8 +337,8 @@ export function LocalDraughtsGame({
               </div>
 
               <div
-                ref={boardRef}
-                className="grid touch-none select-none overflow-hidden rounded-xl border border-black/30"
+                ref={boardZoneRef}
+                className="board-touch-zone relative grid touch-none select-none overflow-hidden rounded-xl border border-black/30"
                 style={{
                   gridTemplateColumns: `repeat(${boardSize}, minmax(0, 1fr))`,
                 }}
@@ -332,9 +355,6 @@ export function LocalDraughtsGame({
                       (squareKey(lastMove.from) === key ||
                         squareKey(lastMove.to) === key);
                     const isDragging = drag?.from === key;
-                    const isOpponentMoving =
-                      opponentMovingFrom !== null &&
-                      squareKey(opponentMovingFrom) === key;
 
                     return (
                       <button
@@ -366,7 +386,6 @@ export function LocalDraughtsGame({
                           playable && isHumanTurn ? "cursor-grab active:cursor-grabbing" : "",
                           selected ? "ring-4 ring-inset ring-emerald-300" : "",
                           isLastMove ? "after:absolute after:inset-0 after:bg-amber-300/25" : "",
-                          isDragging || isOpponentMoving ? "opacity-0" : "",
                         ].join(" ")}
                       >
                         {isDestination && (
@@ -375,29 +394,31 @@ export function LocalDraughtsGame({
                             className="absolute z-[1] size-3 rounded-full bg-emerald-200/70 sm:size-4"
                           />
                         )}
-                        {piece && (
+                        {piece && !motion.isHidden(key) && (
                           <span
+                            key={motion.promotionKey === key ? `promo${lastMove?.seq}` : "p"}
                             aria-hidden="true"
-                            className={`relative z-[2] flex size-[76%] items-center justify-center rounded-full border-[3px] shadow-lg sm:border-4 ${
-                              piece.color === "w"
-                                ? "border-[#eef0dc] bg-[#f7f5e9] shadow-black/25"
-                                : "border-line bg-surface-3 shadow-black/55"
-                            }`}
+                            className={`absolute inset-0 z-[2] flex items-center justify-center ${isDragging ? "opacity-0" : ""}`}
                           >
-                            {piece.king && (
-                              <Crown
-                                className={
-                                  piece.color === "w"
-                                    ? "size-1/2 text-board-dark"
-                                    : "size-1/2 text-amber-200"
-                                }
-                              />
-                            )}
+                            <span className={`piece-base piece-disc ${pieceClasses(piece.color)} ${selected ? "piece-selected" : ""}`}>
+                              {piece.king && (
+                                <Crown className={`${crownClasses(piece.color)} ${motion.promotionKey === key ? "crown-appear" : ""}`} />
+                              )}
+                            </span>
                           </span>
                         )}
                       </button>
                     );
                   }),
+                )}
+                {motion.active && (
+                  <PieceMotionLayer
+                    plan={motion.active.plan}
+                    size={boardSize}
+                    stepMs={animationMs(boardPrefs)}
+                    style={boardPrefs.animation === "lift" ? "lift" : "slide"}
+                    onDone={motion.finish}
+                  />
                 )}
               </div>
 
@@ -517,19 +538,7 @@ export function LocalDraughtsGame({
         </section>
       </div>
 
-      {drag && (
-        <span
-          aria-hidden="true"
-          className={`pointer-events-none fixed z-50 flex size-14 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-4 text-3xl shadow-2xl ${
-            drag.piece === "●"
-              ? "border-[#eef0dc] bg-[#f7f5e9] text-board-dark"
-              : "border-[#eef0dc] bg-[#f7f5e9] text-amber-500"
-          }`}
-          style={{ left: drag.x, top: drag.y }}
-        >
-          {drag.piece === "●" ? "" : <Crown size={24} />}
-        </span>
-      )}
+      <DragGhost drag={drag}>{renderPieceGhost({ color: "w", king: drag?.piece === "♛" })}</DragGhost>
       {result && (
         <GameResultModal
           result={result}

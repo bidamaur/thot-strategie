@@ -10,17 +10,19 @@ import {
   Swords,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Difficulty } from "@/lib/engine/game-settings";
 import { requestComputerMove } from "@/lib/game-ai-client";
-import {
-  animateOpponentMove,
-  playPieceMoveSound,
-  waitForOpponent,
-} from "@/lib/game-feedback";
+import { playPieceMoveSound, waitForOpponent } from "@/lib/game-feedback";
+import { planChessMove, usePieceMotion } from "@/components/board/motion-plans";
+import { PieceMotionLayer, prefersReducedMotion } from "@/components/board/piece-motion";
+import { animationMs } from "@/lib/board-prefs";
+import { useBoardPrefs } from "@/lib/client/board-prefs-store";
 import { DifficultySelector } from "@/components/games/difficulty-selector";
 import { GameResultModal } from "@/components/games/game-result-modal";
 import { useBoardPointerDrag } from "@/components/games/use-board-pointer-drag";
+import { DragGhost } from "@/components/games/drag-ghost";
+import { useBoardTouchGuard } from "@/components/games/use-board-touch-guard";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"] as const;
 
@@ -32,6 +34,16 @@ const PIECES: Record<"w" | "b", Record<PieceSymbol, string>> = {
 interface LastMove {
   from: Square;
   to: Square;
+}
+
+// Apparence des pièces : identique sur le plateau et dans le calque d'animation.
+const glyphClasses = (color: "w" | "b") =>
+  `select-none text-[clamp(1.7rem,7vw,3.8rem)] leading-none ${
+    color === "w" ? "text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.45)]" : "text-accent-ink drop-shadow-[0_1px_1px_rgba(255,255,255,0.45)]"
+  }`;
+
+function renderPieceGhost(color: "w" | "b", type: string) {
+  return <span className={glyphClasses(color)}>{PIECES[color][type as PieceSymbol]}</span>;
 }
 
 interface LocalChessGameProps {
@@ -64,10 +76,11 @@ export function LocalChessGame({
   const [moveHistory, setMoveHistory] = useState<string[]>([]);
   const [difficulty, setDifficulty] = useState(initialDifficulty);
   const [engineError, setEngineError] = useState("");
-  const [opponentMovingFrom, setOpponentMovingFrom] = useState<Square | null>(
-    null,
-  );
-  const boardRef = useRef<HTMLDivElement>(null);
+  const boardPrefs = useBoardPrefs();
+  // Numéro de partie (identifiants d'animation) et dernier coup posé au glisser.
+  const [gameSeq, setGameSeq] = useState(0);
+  const [dragPly, setDragPly] = useState<number | null>(null);
+  const boardZoneRef = useBoardTouchGuard();
 
   const game = replayHistory(moveHistory);
   const isGameOver = game.isGameOver();
@@ -105,20 +118,7 @@ export function LocalChessGame({
           if (!(await waitForOpponent(550 + Math.random() * 550, controller.signal))) {
             return;
           }
-          const glyph = PIECES.b[computerMove.piece];
-          setOpponentMovingFrom(computerMove.from);
-          const moved = await animateOpponentMove(
-            boardRef.current,
-            computerMove.from,
-            computerMove.to,
-            glyph,
-            380 + Math.random() * 180,
-            controller.signal,
-          );
-          if (!moved || cancelled) {
-            if (!cancelled) setOpponentMovingFrom(null);
-            return;
-          }
+          if (cancelled) return;
 
           const playedMove = activeGame.move({
             from: computerMove.from,
@@ -126,7 +126,6 @@ export function LocalChessGame({
             promotion: computerMove.promotion ?? "q",
           });
           playPieceMoveSound();
-          setOpponentMovingFrom(null);
           setLastMove({ from: playedMove.from, to: playedMove.to });
           setMoveHistory(activeGame.history());
           setEngineError("");
@@ -196,6 +195,7 @@ export function LocalChessGame({
         to: destination,
         promotion: "q",
       });
+      setDragPly(moveHistory.length + 1);
       playPieceMoveSound();
       setLastMove({ from: move.from, to: move.to });
       setMoveHistory(activeGame.history());
@@ -213,11 +213,27 @@ export function LocalChessGame({
     setLegalDestinations([]);
     setLastMove(null);
     setEngineError("");
-    setOpponentMovingFrom(null);
+    setDragPly(null);
+    setGameSeq((value) => value + 1);
   }
 
+
+
+  const motionCandidate = useMemo(() => {
+    const last = replayHistory(moveHistory).history({ verbose: true }).at(-1);
+    if (!last) return null;
+    return planChessMove({
+      id: `ia:${gameSeq}:${moveHistory.length}`,
+      instant: dragPly === moveHistory.length,
+      move: last,
+      renderPiece: renderPieceGhost,
+      toDisplay: (square) => ({ r: 8 - Number(square[1]), c: square.charCodeAt(0) - 97 }),
+    });
+  }, [moveHistory, dragPly, gameSeq]);
+  const motion = usePieceMotion(motionCandidate, boardPrefs.animation !== "none" && !prefersReducedMotion());
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-canvas text-ink">
+    <main className="game-no-select relative min-h-screen overflow-hidden bg-canvas text-ink">
       <div className="pointer-events-none absolute -left-40 top-[-18rem] h-[38rem] w-[38rem] rounded-full bg-emerald-500/10 blur-[130px]" />
       <div className="pointer-events-none absolute -right-40 top-80 h-[30rem] w-[30rem] rounded-full bg-amber-400/5 blur-[120px]" />
 
@@ -290,8 +306,8 @@ export function LocalChessGame({
               </div>
 
               <div
-                ref={boardRef}
-                className="grid touch-none select-none grid-cols-8 overflow-hidden rounded-xl border border-black/30"
+                ref={boardZoneRef}
+                className="board-touch-zone relative grid touch-none select-none grid-cols-8 overflow-hidden rounded-xl border border-black/30"
               >
                 {Array.from({ length: 8 }, (_, row) =>
                   FILES.map((file, column) => {
@@ -303,7 +319,6 @@ export function LocalChessGame({
                     const isLastMoveSquare =
                       lastMove?.from === square || lastMove?.to === square;
                     const isCheckedKing = checkedKing === square;
-                    const isOpponentMoving = opponentMovingFrom === square;
 
                     return (
                       <button
@@ -329,7 +344,6 @@ export function LocalChessGame({
                           isCheckedKing ? "bg-red-500/75" : "",
                           isSelected ? "ring-4 ring-inset ring-emerald-300" : "",
                           isHumanTurn ? "cursor-pointer" : "cursor-default",
-                          drag?.from === square || isOpponentMoving ? "opacity-0" : "",
                         ].join(" ")}
                       >
                         {isLegalDestination && (
@@ -344,17 +358,19 @@ export function LocalChessGame({
                             )}
                           </span>
                         )}
-                        {piece && (
+                        {piece && !motion.isHidden(square) && (
                           <span
+                            key={motion.promotionKey === square ? `promo${gameSeq}:${moveHistory.length}` : "p"}
                             aria-hidden="true"
-                            className={[
-                              "relative z-[2] select-none text-[clamp(1.7rem,7vw,3.8rem)] leading-none",
-                              piece.color === "w"
-                                ? "text-white drop-shadow-[0_2px_2px_rgba(0,0,0,0.45)]"
-                                : "text-accent-ink drop-shadow-[0_1px_1px_rgba(255,255,255,0.45)]",
-                            ].join(" ")}
+                            className={`absolute inset-0 z-[2] flex items-center justify-center ${drag?.from === square ? "opacity-0" : ""}`}
                           >
-                            {PIECES[piece.color][piece.type]}
+                            <span
+                              className={`piece-base piece-glyph ${glyphClasses(piece.color)} ${isSelected ? "piece-selected" : ""} ${
+                                motion.promotionKey === square ? "piece-promote" : ""
+                              }`}
+                            >
+                              {PIECES[piece.color][piece.type]}
+                            </span>
                           </span>
                         )}
                         {column === 0 && (
@@ -381,6 +397,15 @@ export function LocalChessGame({
                     );
                   }),
                 ).flat()}
+                {motion.active && (
+                  <PieceMotionLayer
+                    plan={motion.active.plan}
+                    size={8}
+                    stepMs={animationMs(boardPrefs)}
+                    style={boardPrefs.animation === "lift" ? "lift" : "slide"}
+                    onDone={motion.finish}
+                  />
+                )}
               </div>
 
               <div
@@ -516,15 +541,9 @@ export function LocalChessGame({
           </div>
         </section>
       </div>
-      {drag && (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-1/2 text-6xl drop-shadow-[0_8px_8px_rgba(0,0,0,0.65)]"
-          style={{ left: drag.x, top: drag.y }}
-        >
-          {drag.piece}
-        </span>
-      )}
+      <DragGhost drag={drag}>
+        <span className={glyphClasses("w")}>{drag?.piece}</span>
+      </DragGhost>
       {result && (
         <GameResultModal
           result={result}

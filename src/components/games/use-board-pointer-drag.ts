@@ -9,6 +9,8 @@ export interface BoardDrag {
   x: number;
   y: number;
   pointerId: number;
+  /** Taille réelle de la case de départ (px) : la pièce glissée garde exactement sa taille. */
+  size: number;
 }
 
 /** Déplacement minimal (px) avant qu'un appui devienne un glisser : un simple toucher reste un toucher. */
@@ -40,7 +42,7 @@ export function useBoardPointerDrag(
       if (pending && pending.pointerId === event.pointerId && !dragRef.current) {
         const distance = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
         if (distance < DRAG_THRESHOLD_PX) return;
-        const started = { from: pending.from, piece: pending.piece, pointerId: pending.pointerId, x: event.clientX, y: event.clientY };
+        const started = { from: pending.from, piece: pending.piece, pointerId: pending.pointerId, size: pending.size, x: event.clientX, y: event.clientY };
         pendingRef.current = null;
         dragRef.current = started;
         setDrag(started);
@@ -91,7 +93,9 @@ export function useBoardPointerDrag(
     if (input === "tap") return;
     if (event.button !== 0 && event.pointerType === "mouse") return;
     event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
     pendingRef.current = {
+      size: Math.min(rect.width, rect.height),
       from,
       piece,
       x: event.clientX,

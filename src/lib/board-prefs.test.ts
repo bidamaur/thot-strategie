@@ -17,7 +17,7 @@ describe("préférences de plateau", () => {
   it("garde les choix valides et calcule la durée d'animation", () => {
     const prefs = sanitizeBoardPrefs({ theme: "marble", animation: "lift", speed: "slow", input: "tap", lastMove: false });
     expect(prefs).toMatchObject({ theme: "marble", animation: "lift", speed: "slow", input: "tap", lastMove: false });
-    expect(animationMs(prefs)).toBe(360);
+    expect(animationMs(prefs)).toBe(280);
     expect(animationMs({ ...prefs, animation: "none" })).toBe(0);
   });
 });

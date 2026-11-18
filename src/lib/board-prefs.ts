@@ -23,9 +23,9 @@ export const PIECE_ANIMATIONS = [
 export type PieceAnimation = (typeof PIECE_ANIMATIONS)[number]["id"];
 
 export const ANIMATION_SPEEDS = [
-  { id: "fast", label: "Rapide", ms: 140 },
+  { id: "fast", label: "Rapide", ms: 170 },
   { id: "normal", label: "Normale", ms: 220 },
-  { id: "slow", label: "Lente", ms: 360 },
+  { id: "slow", label: "Lente", ms: 280 },
 ] as const;
 export type AnimationSpeed = (typeof ANIMATION_SPEEDS)[number]["id"];
 
