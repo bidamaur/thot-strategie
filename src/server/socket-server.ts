@@ -1,4 +1,5 @@
 import type { Server as HttpServer } from "node:http";
+import { randomUUID } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { Chess, type Square } from "chess.js";
 import {
@@ -45,6 +46,7 @@ import {
 } from "../lib/engine/draughts";
 import { Server, type Socket } from "socket.io";
 import type {
+  ChatMessagePayload,
   ClientToServerEvents,
   GameMode,
   JoinQueuePayload,
@@ -126,7 +128,11 @@ interface ActiveMatch {
   /** Joueurs ayant effectivement rejoint la partie (forfait si l'un ne vient jamais). */
   joinedPlayerIds: Set<string>;
   noShowTimer: NodeJS.Timeout | null;
+  /** Derniers messages de la salle (mémoire du serveur, renvoyés à l'entrée). */
+  chatHistory: ChatMessagePayload[];
 }
+
+const CHAT_HISTORY_LIMIT = 50;
 
 const isGameType = (value: unknown): value is JoinQueuePayload["gameType"] =>
   value === "CHESS" || value === "CHECKERS";
@@ -334,6 +340,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       reconnectTimers: new Map(),
       joinedPlayerIds: new Set(),
       noShowTimer: null,
+      chatHistory: [],
     };
     matches.set(matchId, match);
     if (
@@ -1341,6 +1348,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         reconnectTimers: new Map(),
       joinedPlayerIds: new Set(),
       noShowTimer: null,
+      chatHistory: [],
       };
       matches.set(nextMatchId, nextMatch);
       for (const participantId of match.playerIds) {
@@ -1542,6 +1550,7 @@ export function attachSocketServer(httpServer: HttpServer): Server {
       reconnectTimers: new Map(),
       joinedPlayerIds: new Set(),
       noShowTimer: null,
+      chatHistory: [],
     };
     matches.set(matchId, match);
     void selfSocket.join(matchId);
@@ -1900,6 +1909,9 @@ export function attachSocketServer(httpServer: HttpServer): Server {
           joinedMatchSockets.set(playerId, socket.id);
           socketJoinedMatches.set(socket.id, match.matchId);
           sendMatchState(socket, match);
+          if (match.chatHistory.length > 0) {
+            socket.emit("chat_history", { matchId: match.matchId, messages: match.chatHistory });
+          }
           match.joinedPlayerIds.add(playerId);
           scheduleNoShowForfeit(match);
           const opponentId = match.playerIds.find((id) => id !== playerId);
@@ -2488,12 +2500,23 @@ export function attachSocketServer(httpServer: HttpServer): Server {
         socket.emit("server_error", { message: "Message trop long." });
         return;
       }
-      io.to(payload.matchId).emit("chat_message", {
+      // Identifiant unique attribué ici ; le clientId permet à l'expéditeur de
+      // remplacer son message optimiste au lieu de l'ajouter une deuxième fois.
+      const clientId =
+        typeof payload.clientId === "string" && /^[A-Za-z0-9-]{1,64}$/.test(payload.clientId)
+          ? payload.clientId
+          : null;
+      const message: ChatMessagePayload = {
         matchId: payload.matchId,
+        id: randomUUID(),
+        clientId,
         from: playerId,
         text: trimmed,
-        ts: Date.now(),
-      });
+        ts: now,
+      };
+      match.chatHistory.push(message);
+      if (match.chatHistory.length > CHAT_HISTORY_LIMIT) match.chatHistory.shift();
+      io.to(payload.matchId).emit("chat_message", message);
     });
 
      socket.on("propose_time", (payload) => {

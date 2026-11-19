@@ -177,14 +177,20 @@ function findCapturesFrom(
     const movedPiece = { ...piece };
     const reachedPromotionRow =
       step.to.row === promotionRow(piece.color, board.length);
-    if (reachedPromotionRow) movedPiece.king = true;
+    // Dames anglaises : un pion qui atteint la dernière rangée pendant une prise est
+    // couronné et son coup s'arrête. Dames internationales : il reste un pion pendant
+    // toute la rafle et la poursuit ; la promotion n'est décidée qu'à la case d'arrivée
+    // finale (applyDraughtsMove).
+    const crownsMidCapture =
+      reachedPromotionRow && !piece.king && position.variant === "ENGLISH";
+    if (crownsMidCapture) movedPiece.king = true;
     board[step.to.row][step.to.col] = movedPiece;
 
     const nextPosition = { ...position, board };
     const nextPath = [...path, step.to];
     const nextCaptures = [...captures, step.captured];
 
-    if (reachedPromotionRow && !piece.king) {
+    if (crownsMidCapture) {
       completeMoves.push({
         from: origin,
         path: nextPath,
@@ -430,7 +436,8 @@ export function chooseDraughtsMove(
   position: DraughtsPosition,
   difficulty: Difficulty,
 ): DraughtsMove | null {
-  if (position.turn !== "b") return null;
+  // Évaluation du point de vue des blancs : les noirs minimisent, les blancs maximisent.
+  const sign = position.turn === "b" ? 1 : -1;
 
   const legalMoves = orderMoves(getLegalDraughtsMoves(position));
   if (legalMoves.length === 0) return null;
@@ -458,17 +465,17 @@ export function chooseDraughtsMove(
     }
 
     for (const move of legalMoves) {
-      const score = search(
+      const value = sign * search(
         applyDraughtsMove(position, move),
         depth - 1,
         -Infinity,
         Infinity,
         state,
       );
-      if (score < bestScore) {
-        bestScore = score;
+      if (value < bestScore) {
+        bestScore = value;
         bestMoves = [move];
-      } else if (score === bestScore) {
+      } else if (value === bestScore) {
         bestMoves.push(move);
       }
 

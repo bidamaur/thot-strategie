@@ -34,11 +34,13 @@ import { planChessMove, planDraughtsMove, usePieceMotion, type PlannedMotion } f
 import { PieceMotionLayer, prefersReducedMotion } from "@/components/board/piece-motion";
 import { Modal } from "@/components/community/shared";
 import { GameResultModal } from "@/components/games/game-result-modal";
+import { OpponentProfileModal } from "@/components/match/opponent-profile-modal";
 import { DragGhost } from "@/components/games/drag-ghost";
 import { useBoardTouchGuard } from "@/components/games/use-board-touch-guard";
 import { animationMs } from "@/lib/board-prefs";
 import { useBoardPrefs } from "@/lib/client/board-prefs-store";
 import { useVisualViewport } from "@/lib/client/use-visual-viewport";
+import { type ChatEntry, mergeChatHistory, mergeChatMessage, newClientId, optimisticEntry } from "@/lib/client/chat-messages";
 import { useBoardPointerDrag } from "@/components/games/use-board-pointer-drag";
 import {
   applyDraughtsMove,
@@ -191,25 +193,35 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
   const [timeProposalBy, setTimeProposalBy] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<{ id: string; from: string; text: string; ts: number }[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatEntry[]>([]);
+  // Nouvelle partie (revanche) dans le même écran : le chat repart de zéro.
+  const [chatMatchId, setChatMatchId] = useState(matchId);
+  if (chatMatchId !== matchId) {
+    setChatMatchId(matchId);
+    setChatMessages([]);
+  }
   const [chatInput, setChatInput] = useState("");
   const [reconnectSeconds, setReconnectSeconds] = useState(0);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const boardPrefs = useBoardPrefs();
   const boardZoneRef = useBoardTouchGuard();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Profil de l'adversaire (consultation seule, sans effet sur la partie).
+  const [profileOpen, setProfileOpen] = useState(false);
+  const closeProfile = useCallback(() => setProfileOpen(false), []);
   // Coup joué par glisser : la pièce est déjà à sa place, pas d'animation.
   const [dragMovePly, setDragMovePly] = useState<number | null>(null);
   const [betProposal, setBetProposal] = useState<{ amount: number; by: string } | null>(null);
   const sendChatMessage = () => {
     if (!chatInput.trim() || !socketRef.current || !match) return;
     const text = chatInput.trim();
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const message = { id, from: match.playerId, text, ts: Date.now() };
-    setChatMessages((prev) => [...prev, message]);
+    // Affichage immédiat ; la confirmation du serveur (même clientId) le remplacera.
+    const clientId = newClientId();
+    setChatMessages((prev) => [...prev, optimisticEntry(clientId, match.playerId, text)]);
     socketRef.current.emit("chat_message", {
       matchId: match.matchId,
       message: text,
+      clientId,
     });
     setChatInput("");
   };
@@ -429,12 +441,13 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
       socket.disconnect();
       router.push("/match/en-ligne");
     });
-    socket.on("chat_message", ({ matchId: msgMatchId, from, text, ts }) => {
-      if (msgMatchId !== matchId) return;
-      setChatMessages((prev) => {
-        if (prev.some((m) => m.id === `${ts}-${from}`)) return prev;
-        return [...prev, { id: `${ts}-${from}`, from, text, ts: ts ?? Date.now() }];
-      });
+    socket.on("chat_message", (message) => {
+      if (message.matchId !== matchId) return;
+      setChatMessages((prev) => mergeChatMessage(prev, message));
+    });
+    socket.on("chat_history", ({ matchId: historyMatchId, messages }) => {
+      if (historyMatchId !== matchId) return;
+      setChatMessages((prev) => mergeChatHistory(prev, messages));
     });
     socket.on("bet_proposed", ({ matchId: betMatchId, amount, by }) => {
       if (betMatchId !== matchId) return;
@@ -1117,9 +1130,22 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
     const color = isSelf ? match.playerColor : match.playerColor === "w" ? "b" : "w";
     const rating = isSelf ? match.eloBalance : match.opponentEloBalance;
     const low = typeof time === "number" && time <= 30_000;
+    const Identity = isSelf ? "div" : "button";
     return (
       <div className="board-fit flex items-center justify-between gap-3 px-1">
-        <div className="flex min-w-0 items-center gap-2.5">
+        <Identity
+          {...(isSelf
+            ? {}
+            : {
+                type: "button" as const,
+                onClick: () => setProfileOpen(true),
+                "aria-label": `Voir le profil de ${match.opponentUsername}`,
+                title: "Voir le profil",
+              })}
+          className={`flex min-w-0 items-center gap-2.5 text-left ${
+            isSelf ? "" : "-m-1 rounded-xl p-1 transition hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          }`}
+        >
           <span
             className={`flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border ${
               active ? "border-accent/50" : "border-line"
@@ -1149,7 +1175,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
               {mode !== "CASUAL" && typeof rating === "number" ? `${rating} ELO` : modeLabel}
             </p>
           </div>
-        </div>
+        </Identity>
         {time !== null && (
           <span
             className={`tabular rounded-lg px-3 py-1.5 font-mono text-lg font-semibold transition-colors ${
@@ -1700,7 +1726,7 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
                         {m.text}
                       </span>
                       <span className="mt-0.5 block text-[10px] text-ink-muted">
-                        {new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {m.pending ? "Envoi…" : new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
                     </div>
                   </div>
@@ -1796,6 +1822,8 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
           </section>
         </div>
       )}
+
+      {profileOpen && <OpponentProfileModal matchId={match.matchId} onClose={closeProfile} />}
 
       {result && !rematchWaiting && (
         <GameResultModal

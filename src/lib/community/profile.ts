@@ -14,6 +14,12 @@ export interface PrivacySettings {
   showPosts: boolean;
   showOnline: boolean;
   showLocation: boolean;
+  /** Statistiques avancées (consultables par les Premium, en partie). Exige aussi showStats. */
+  showAdvancedStats: boolean;
+  /** Cinq derniers adversaires et variations de points. Exige aussi showStats. */
+  showRecentOpponents: boolean;
+  /** Performances en tournois et compétitions rémunérées (classements, jamais les montants). */
+  showTournaments: boolean;
   /** Qui peut envoyer une demande d'amitié. */
   friendRequests: "EVERYONE" | "NOBODY";
   /** Couleur d'accent du profil (privilège Premium « personnalisation »). */
@@ -28,6 +34,9 @@ export const DEFAULT_PRIVACY: PrivacySettings = {
   showPosts: true,
   showOnline: true,
   showLocation: true,
+  showAdvancedStats: true,
+  showRecentOpponents: true,
+  showTournaments: true,
   friendRequests: "EVERYONE",
   accent: null,
 };
@@ -44,6 +53,9 @@ export function readPrivacy(value: Prisma.JsonValue | null | undefined): Privacy
     showPosts: bool("showPosts"),
     showOnline: bool("showOnline"),
     showLocation: bool("showLocation"),
+    showAdvancedStats: bool("showAdvancedStats"),
+    showRecentOpponents: bool("showRecentOpponents"),
+    showTournaments: bool("showTournaments"),
     friendRequests: raw.friendRequests === "NOBODY" ? "NOBODY" : "EVERYONE",
     accent: typeof raw.accent === "string" && /^#[0-9a-fA-F]{6}$/.test(raw.accent) ? raw.accent : null,
   };

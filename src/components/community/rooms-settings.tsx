@@ -137,13 +137,20 @@ export function RoomsPanel({ rooms, onChanged, loggedIn }: { rooms: RoomData[]; 
 }
 
 const PRIVACY_LABELS: [string, string][] = [
-  ["showRatings", "Mes classements ELO"],
+  ["showRatings", "Mes classements ELO et mes points"],
   ["showStats", "Mes statistiques et dernières parties"],
   ["showClubs", "Mes clubs"],
   ["showFriends", "Mon nombre d’amis"],
   ["showPosts", "Mes publications sur mon profil"],
   ["showOnline", "Mon statut en ligne"],
   ["showLocation", "Ma ville et mon pays"],
+];
+
+/** Profil consulté par l'adversaire en partie (section Premium « Statistiques avancées »). */
+const STATS_PRIVACY_LABELS: [string, string, string][] = [
+  ["showAdvancedStats", "Mes statistiques avancées", "Bilan, séries, meilleur classement atteint."],
+  ["showRecentOpponents", "Mes 5 derniers adversaires", "Résultats et points gagnés ou perdus."],
+  ["showTournaments", "Mes performances en tournois", "Classements en tournois et compétitions rémunérées, jamais les montants gagnés."],
 ];
 
 export function SettingsPanel() {
@@ -216,6 +223,22 @@ export function SettingsPanel() {
             <input type="checkbox" checked={me.privacy[key] !== false} onChange={(e) => save({ privacy: { [key]: e.target.checked } })} />
           </label>
         ))}
+        <div className="border-t border-line pt-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-muted">Confidentialité de mes statistiques</h3>
+          <p className="mt-1 text-xs text-ink-muted">
+            Ce que vos adversaires Premium peuvent consulter en touchant votre avatar pendant une partie.
+            {me.privacy.showStats === false && " Désactivé tant que « Mes statistiques et dernières parties » est masqué (sauf les tournois)."}
+          </p>
+          {STATS_PRIVACY_LABELS.map(([key, label, hint]) => (
+            <label key={key} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+              <span>
+                {label}
+                <span className="block text-xs text-ink-muted">{hint}</span>
+              </span>
+              <input type="checkbox" checked={me.privacy[key] !== false} onChange={(e) => save({ privacy: { [key]: e.target.checked } })} />
+            </label>
+          ))}
+        </div>
         <label className="flex items-center justify-between gap-3 py-1 text-sm">
           Demandes d’amitié
           <select value={String(me.privacy.friendRequests)} onChange={(e) => save({ privacy: { friendRequests: e.target.value } })} className="field w-auto py-1">

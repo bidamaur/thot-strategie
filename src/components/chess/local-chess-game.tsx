@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Difficulty } from "@/lib/engine/game-settings";
+import { humanColorFor, type Difficulty, type FirstPlayer } from "@/lib/engine/game-settings";
 import { requestComputerMove } from "@/lib/game-ai-client";
 import { playPieceMoveSound, waitForOpponent } from "@/lib/game-feedback";
 import { planChessMove, usePieceMotion } from "@/components/board/motion-plans";
@@ -48,7 +48,12 @@ function renderPieceGhost(color: "w" | "b", type: string) {
 
 interface LocalChessGameProps {
   initialDifficulty: Difficulty;
+  /** Qui joue le premier coup (choisi au lancement de l'entraînement). */
+  firstPlayer: FirstPlayer;
 }
+
+// Camp au trait dans la position initiale, selon le moteur d'échecs.
+const STARTING_COLOR = new Chess().turn();
 
 function getKingSquare(game: Chess, color: "w" | "b"): Square | null {
   for (const [row, squares] of game.board().entries()) {
@@ -69,7 +74,12 @@ function replayHistory(history: string[]): Chess {
 
 export function LocalChessGame({
   initialDifficulty,
+  firstPlayer,
 }: LocalChessGameProps) {
+  const humanColor = humanColorFor(firstPlayer, STARTING_COLOR);
+  const aiColor = humanColor === "w" ? "b" : "w";
+  // Le joueur a toujours ses pièces en bas : échiquier retourné s'il joue les noirs.
+  const flipped = humanColor === "b";
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
   const [legalDestinations, setLegalDestinations] = useState<Square[]>([]);
   const [lastMove, setLastMove] = useState<LastMove | null>(null);
@@ -84,12 +94,12 @@ export function LocalChessGame({
 
   const game = replayHistory(moveHistory);
   const isGameOver = game.isGameOver();
-  const isThinking = game.turn() === "b" && !isGameOver;
-  const isHumanTurn = game.turn() === "w" && !isGameOver;
+  const isThinking = game.turn() === aiColor && !isGameOver;
+  const isHumanTurn = game.turn() === humanColor && !isGameOver;
   const checkedKing = game.isCheck() ? getKingSquare(game, game.turn()) : null;
   const result = isGameOver
     ? game.isCheckmate()
-      ? game.turn() === "b"
+      ? game.turn() === aiColor
         ? "win"
         : "loss"
       : "draw"
@@ -97,7 +107,7 @@ export function LocalChessGame({
 
   useEffect(() => {
     const currentGame = replayHistory(moveHistory);
-    if (currentGame.turn() !== "b" || currentGame.isGameOver()) return;
+    if (currentGame.turn() !== aiColor || currentGame.isGameOver()) return;
     let cancelled = false;
     const controller = new AbortController();
 
@@ -144,7 +154,7 @@ export function LocalChessGame({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [difficulty, moveHistory]);
+  }, [aiColor, difficulty, moveHistory]);
 
   const selectSquare = useCallback((square: Square) => {
     if (!isHumanTurn) return;
@@ -166,7 +176,7 @@ export function LocalChessGame({
     }
 
     const piece = activeGame.get(square);
-    if (piece?.color === "w") {
+    if (piece?.color === humanColor) {
       setSelectedSquare(square);
       setLegalDestinations(
         activeGame.moves({ square, verbose: true }).map((move) => move.to),
@@ -176,7 +186,7 @@ export function LocalChessGame({
 
     setSelectedSquare(null);
     setLegalDestinations([]);
-  }, [isHumanTurn, legalDestinations, moveHistory, selectedSquare]);
+  }, [humanColor, isHumanTurn, legalDestinations, moveHistory, selectedSquare]);
 
   const handleDrop = useCallback(
     (from: string, to: string) => {
@@ -227,9 +237,13 @@ export function LocalChessGame({
       instant: dragPly === moveHistory.length,
       move: last,
       renderPiece: renderPieceGhost,
-      toDisplay: (square) => ({ r: 8 - Number(square[1]), c: square.charCodeAt(0) - 97 }),
+      toDisplay: (square) => {
+        const r = 8 - Number(square[1]);
+        const c = square.charCodeAt(0) - 97;
+        return flipped ? { r: 7 - r, c: 7 - c } : { r, c };
+      },
     });
-  }, [moveHistory, dragPly, gameSeq]);
+  }, [moveHistory, dragPly, gameSeq, flipped]);
   const motion = usePieceMotion(motionCandidate, boardPrefs.animation !== "none" && !prefersReducedMotion());
 
   return (
@@ -268,7 +282,8 @@ export function LocalChessGame({
                 Échecs <span className="font-serif font-normal italic text-emerald-200">contre l’IA</span>
               </h1>
               <p className="mt-2 text-sm text-white/45">
-                Jouez les blancs. Les coups sont vérifiés par le moteur d’échecs.
+                Vous jouez les {humanColor === "w" ? "blancs" : "noirs"} ·{" "}
+                {firstPlayer === "ai" ? "l’IA commence" : "vous commencez"}.
               </p>
             </div>
             <button
@@ -295,7 +310,7 @@ export function LocalChessGame({
               >
                 <div className="flex items-center gap-3">
                   <span className="flex size-10 items-center justify-center rounded-xl bg-emerald-300/10 text-xl">
-                    ♚
+                    {aiColor === "w" ? "♔" : "♚"}
                   </span>
                   <div>
                     <p className="text-sm font-semibold">Adversaire</p>
@@ -311,7 +326,10 @@ export function LocalChessGame({
               >
                 {Array.from({ length: 8 }, (_, row) =>
                   FILES.map((file, column) => {
-                    const square = `${file}${8 - row}` as Square;
+                    // Case affichée → case réelle (rotation de 180° si échiquier retourné).
+                    const square = (flipped
+                      ? `${FILES[7 - column]}${row + 1}`
+                      : `${file}${8 - row}`) as Square;
                     const piece = game.get(square);
                     const isLight = (row + column) % 2 === 0;
                     const isSelected = selectedSquare === square;
@@ -333,7 +351,7 @@ export function LocalChessGame({
                           selectSquare(square);
                         }}
                         onPointerDown={(event) => {
-                          if (!isHumanTurn || piece?.color !== "w") return;
+                          if (!isHumanTurn || piece?.color !== humanColor) return;
                           selectSquare(square);
                           beginDrag(event, square, PIECES[piece.color][piece.type]);
                         }}
@@ -380,7 +398,7 @@ export function LocalChessGame({
                               isLight ? "text-board-dark" : "text-board-light"
                             }`}
                           >
-                            {8 - row}
+                            {square[1]}
                           </span>
                         )}
                         {row === 7 && (
@@ -390,7 +408,7 @@ export function LocalChessGame({
                               isLight ? "text-board-dark" : "text-board-light"
                             }`}
                           >
-                            {file}
+                            {square[0]}
                           </span>
                         )}
                       </button>
@@ -417,12 +435,12 @@ export function LocalChessGame({
               >
                 <div className="flex items-center gap-3">
                   <span className="flex size-10 items-center justify-center rounded-xl bg-white/[0.08] text-xl">
-                    ♔
+                    {humanColor === "w" ? "♔" : "♚"}
                   </span>
                   <div>
                     <p className="text-sm font-semibold">Vous</p>
                     <p className="text-xs text-white/40">
-                      Blancs{isHumanTurn ? " · à vous" : ""}
+                      {humanColor === "w" ? "Blancs" : "Noirs"}{isHumanTurn ? " · à vous" : ""}
                     </p>
                   </div>
                 </div>
@@ -542,7 +560,7 @@ export function LocalChessGame({
         </section>
       </div>
       <DragGhost drag={drag}>
-        <span className={glyphClasses("w")}>{drag?.piece}</span>
+        <span className={glyphClasses(humanColor)}>{drag?.piece}</span>
       </DragGhost>
       {result && (
         <GameResultModal

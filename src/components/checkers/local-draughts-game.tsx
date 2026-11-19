@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DIFFICULTIES, type Difficulty, type DraughtsVariant } from "@/lib/engine/game-settings";
+import { DIFFICULTIES, humanColorFor, type Difficulty, type DraughtsVariant, type FirstPlayer } from "@/lib/engine/game-settings";
 import {
   applyDraughtsMove,
   createDraughtsPosition,
@@ -34,6 +34,8 @@ import { useBoardTouchGuard } from "@/components/games/use-board-touch-guard";
 interface LocalDraughtsGameProps {
   initialDifficulty: Difficulty;
   initialVariant: DraughtsVariant;
+  /** Qui joue le premier coup (choisi au lancement de l'entraînement). */
+  firstPlayer: FirstPlayer;
 }
 
 interface LastMove {
@@ -98,7 +100,13 @@ function getPieceLabel(
 export function LocalDraughtsGame({
   initialDifficulty,
   initialVariant,
+  firstPlayer,
 }: LocalDraughtsGameProps) {
+  // Camp au trait dans la position initiale, selon le moteur (règles de la variante).
+  const humanColor = humanColorFor(firstPlayer, createDraughtsPosition(initialVariant).turn);
+  const aiColor = humanColor === "w" ? "b" : "w";
+  // Le joueur a toujours ses pions en bas : damier retourné s'il joue les noirs.
+  const flipped = humanColor === "b";
   const [position, setPosition] = useState(() =>
     createDraughtsPosition(initialVariant),
   );
@@ -116,9 +124,9 @@ export function LocalDraughtsGame({
     [position],
   );
   const isGameOver = legalMoves.length === 0;
-  const isThinking = position.turn === "b" && !isGameOver;
-  const isHumanTurn = position.turn === "w" && !isGameOver;
-  const result = isGameOver ? (position.turn === "b" ? "win" : "loss") : null;
+  const isThinking = position.turn === aiColor && !isGameOver;
+  const isHumanTurn = position.turn === humanColor && !isGameOver;
+  const result = isGameOver ? (position.turn === aiColor ? "win" : "loss") : null;
   const selectedMoves = selectedSquare
     ? legalMoves.filter((move) => squareKey(move.from) === selectedSquare)
     : [];
@@ -157,14 +165,14 @@ export function LocalDraughtsGame({
 
       const square = parseSquareKey(to);
       const piece = square ? position.board[square.row]?.[square.col] : null;
-      if (piece?.color === "w") setSelectedSquare(to);
+      if (piece?.color === humanColor) setSelectedSquare(to);
     },
-    [isHumanTurn, legalMoves, playMove, position],
+    [humanColor, isHumanTurn, legalMoves, playMove, position],
   );
   const { drag, beginDrag, consumeClick } = useBoardPointerDrag(handleDrop);
 
   useEffect(() => {
-    if (position.turn !== "b" || isGameOver) return;
+    if (position.turn !== aiColor || isGameOver) return;
     let cancelled = false;
     const controller = new AbortController();
 
@@ -212,7 +220,7 @@ export function LocalDraughtsGame({
       cancelled = true;
       controller.abort();
     };
-  }, [difficulty, isGameOver, position]);
+  }, [aiColor, difficulty, isGameOver, position]);
 
   function selectSquare(square: DraughtsCoordinate) {
     if (!isHumanTurn) return;
@@ -230,7 +238,7 @@ export function LocalDraughtsGame({
       return;
     }
 
-    if (piece?.color === "w") {
+    if (piece?.color === humanColor) {
       setSelectedSquare(key);
     } else {
       setSelectedSquare(null);
@@ -257,10 +265,11 @@ export function LocalDraughtsGame({
             after: lastMove.after,
             keyOf: squareKey,
             renderPiece: renderPieceGhost,
-            toDisplay: ({ row, col }) => ({ r: row, c: col }),
+            toDisplay: ({ row, col }) =>
+              flipped ? { r: boardSize - 1 - row, c: boardSize - 1 - col } : { r: row, c: col },
           })
         : null,
-    [lastMove],
+    [lastMove, flipped, boardSize],
   );
   const motion = usePieceMotion(motionCandidate, boardPrefs.animation !== "none" && !prefersReducedMotion());
   return (
@@ -300,7 +309,8 @@ export function LocalDraughtsGame({
                 </span>
               </h1>
               <p className="mt-2 text-sm text-white/45">
-                Déplacez vos pions en les glissant sur le damier.
+                Vous jouez les {humanColor === "w" ? "blancs" : "noirs"} ·{" "}
+                {firstPlayer === "ai" ? "l’IA commence" : "vous commencez"}.
               </p>
             </div>
             <button
@@ -343,8 +353,11 @@ export function LocalDraughtsGame({
                   gridTemplateColumns: `repeat(${boardSize}, minmax(0, 1fr))`,
                 }}
               >
-                {position.board.flatMap((row, rowIndex) =>
-                  row.map((piece, colIndex) => {
+                {position.board.flatMap((_, displayRow) =>
+                  position.board[displayRow].map((__, displayCol) => {
+                    const rowIndex = flipped ? boardSize - 1 - displayRow : displayRow;
+                    const colIndex = flipped ? boardSize - 1 - displayCol : displayCol;
+                    const piece = position.board[rowIndex][colIndex];
                     const coordinate = { row: rowIndex, col: colIndex };
                     const key = squareKey(coordinate);
                     const playable = (rowIndex + colIndex) % 2 === 1;
@@ -368,7 +381,7 @@ export function LocalDraughtsGame({
                         aria-pressed={selected}
                         disabled={!playable || !isHumanTurn}
                         onPointerDown={(event) => {
-                          if (piece?.color !== "w" || !isHumanTurn) return;
+                          if (piece?.color !== humanColor || !isHumanTurn) return;
                           setSelectedSquare(key);
                           beginDrag(
                             event,
@@ -430,12 +443,16 @@ export function LocalDraughtsGame({
                 }`}
               >
                 <span className="flex size-10 items-center justify-center rounded-xl bg-white/[0.08]">
-                  <span className="size-6 rounded-full border-[3px] border-[#eef0dc] bg-[#f7f5e9]" />
+                  <span
+                    className={`size-6 rounded-full border-[3px] ${
+                      humanColor === "w" ? "border-[#eef0dc] bg-[#f7f5e9]" : "border-line bg-surface-3"
+                    }`}
+                  />
                 </span>
                 <div>
                   <p className="text-sm font-semibold">Vous</p>
                   <p className="text-xs text-white/40">
-                    Pions blancs{isHumanTurn ? " · à vous" : ""}
+                    Pions {humanColor === "w" ? "blancs" : "noirs"}{isHumanTurn ? " · à vous" : ""}
                   </p>
                 </div>
               </div>
@@ -538,7 +555,7 @@ export function LocalDraughtsGame({
         </section>
       </div>
 
-      <DragGhost drag={drag}>{renderPieceGhost({ color: "w", king: drag?.piece === "♛" })}</DragGhost>
+      <DragGhost drag={drag}>{renderPieceGhost({ color: humanColor, king: drag?.piece === "♛" })}</DragGhost>
       {result && (
         <GameResultModal
           result={result}

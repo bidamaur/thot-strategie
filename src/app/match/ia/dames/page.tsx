@@ -1,8 +1,9 @@
 import { LocalDraughtsGame } from "@/components/checkers/local-draughts-game";
 import { Suspense } from "react";
-import type {
-  Difficulty,
-  DraughtsVariant,
+import {
+  parseFirstPlayer,
+  type Difficulty,
+  type DraughtsVariant,
 } from "@/lib/engine/game-settings";
 
 const DIFFICULTY_VALUES = new Set<Difficulty>([
@@ -14,7 +15,7 @@ const DIFFICULTY_VALUES = new Set<Difficulty>([
 const VARIANT_VALUES = new Set<DraughtsVariant>(["ENGLISH", "INTERNATIONAL"]);
 
 interface DraughtsGamePageProps {
-  searchParams: Promise<{ difficulty?: string; variant?: string }>;
+  searchParams: Promise<{ difficulty?: string; variant?: string; first?: string }>;
 }
 
 export default async function DraughtsGamePage({
@@ -36,7 +37,7 @@ export default async function DraughtsGamePage({
 async function DraughtsGame({
   searchParams,
 }: DraughtsGamePageProps) {
-  const { difficulty, variant } = await searchParams;
+  const { difficulty, variant, first } = await searchParams;
   const selectedDifficulty = DIFFICULTY_VALUES.has(difficulty as Difficulty)
     ? (difficulty as Difficulty)
     : "moyen";
@@ -48,6 +49,7 @@ async function DraughtsGame({
     <LocalDraughtsGame
       initialDifficulty={selectedDifficulty}
       initialVariant={selectedVariant}
+      firstPlayer={parseFirstPlayer(first)}
     />
   );
 }

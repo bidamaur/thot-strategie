@@ -7,20 +7,30 @@ import {
   Crown,
   LoaderCircle,
   Swords,
+  User,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
+  DEFAULT_FIRST_PLAYER,
   DIFFICULTIES,
   DRAUGHTS_VARIANTS,
   type Difficulty,
   type DraughtsVariant,
+  type FirstPlayer,
 } from "@/lib/engine/game-settings";
+
+const FIRST_PLAYER_OPTIONS: { value: FirstPlayer; label: string; hint: string; Icon: typeof Bot }[] = [
+  { value: "ai", label: "L’IA commence", hint: "Vous jouez le second camp", Icon: Bot },
+  { value: "me", label: "Je commence", hint: "Vous jouez le premier camp", Icon: User },
+];
 
 const VARIANT_STORAGE_KEY = "thot-strategie-draughts-variant";
 
 export function AiGameSetup() {
   const [difficulty, setDifficulty] = useState<Difficulty>("moyen");
+  // Non mémorisé : à chaque ouverture de l'entraînement, l'IA commence par défaut.
+  const [firstPlayer, setFirstPlayer] = useState<FirstPlayer>(DEFAULT_FIRST_PLAYER);
   const [variant, setVariant] = useState<DraughtsVariant>("INTERNATIONAL");
   const [savingPreference, setSavingPreference] = useState(false);
   const [preferenceMessage, setPreferenceMessage] = useState("");
@@ -91,9 +101,9 @@ export function AiGameSetup() {
     }
   }
 
-  const chessHref = `/match/ia/echecs?difficulty=${difficulty}`;
+  const chessHref = `/match/ia/echecs?difficulty=${difficulty}&first=${firstPlayer}`;
   const draughtsHref =
-    `/match/ia/dames?variant=${variant}&difficulty=${difficulty}`;
+    `/match/ia/dames?variant=${variant}&difficulty=${difficulty}&first=${firstPlayer}`;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-canvas text-ink">
@@ -155,6 +165,47 @@ export function AiGameSetup() {
                     </span>
                   </button>
                 ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="mt-7 border-t border-white/[0.08] pt-6">
+              <legend id="first-player-label" className="mb-3 text-xs font-semibold tracking-[0.18em] text-white/40">
+                QUI COMMENCE LA PARTIE ?
+              </legend>
+              <div role="radiogroup" aria-labelledby="first-player-label" className="grid grid-cols-2 gap-2">
+                {FIRST_PLAYER_OPTIONS.map(({ value, label, hint, Icon }) => {
+                  const checked = firstPlayer === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={checked}
+                      onClick={() => setFirstPlayer(value)}
+                      className={`flex items-start gap-2.5 rounded-xl border px-3 py-3 text-left transition ${
+                        checked
+                          ? "border-emerald-200/50 bg-emerald-200/10 text-emerald-100"
+                          : "border-white/10 bg-black/10 text-white/70 hover:border-white/25"
+                      }`}
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ${
+                          checked ? "border-emerald-200" : "border-white/30"
+                        }`}
+                      >
+                        {checked && <span className="size-2 rounded-full bg-emerald-200" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-1.5 text-sm font-semibold">
+                          <Icon size={14} className="shrink-0" />
+                          {label}
+                        </span>
+                        <span className="mt-1 block text-[11px] text-white/40">{hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </fieldset>
 

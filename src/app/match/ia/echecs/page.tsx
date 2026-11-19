@@ -1,6 +1,6 @@
 import { LocalChessGame } from "@/components/chess/local-chess-game";
 import { Suspense } from "react";
-import type { Difficulty } from "@/lib/engine/game-settings";
+import { parseFirstPlayer, type Difficulty } from "@/lib/engine/game-settings";
 
 const DIFFICULTY_VALUES = new Set<Difficulty>([
   "simple",
@@ -10,7 +10,7 @@ const DIFFICULTY_VALUES = new Set<Difficulty>([
 ]);
 
 interface ChessGamePageProps {
-  searchParams: Promise<{ difficulty?: string }>;
+  searchParams: Promise<{ difficulty?: string; first?: string }>;
 }
 
 export default async function ChessGamePage({
@@ -30,10 +30,10 @@ export default async function ChessGamePage({
 }
 
 async function ChessGame({ searchParams }: ChessGamePageProps) {
-  const { difficulty } = await searchParams;
+  const { difficulty, first } = await searchParams;
   const selectedDifficulty = DIFFICULTY_VALUES.has(difficulty as Difficulty)
     ? (difficulty as Difficulty)
     : "moyen";
 
-  return <LocalChessGame initialDifficulty={selectedDifficulty} />;
+  return <LocalChessGame initialDifficulty={selectedDifficulty} firstPlayer={parseFirstPlayer(first)} />;
 }

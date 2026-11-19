@@ -170,7 +170,9 @@ export function chooseComputerMove(
   difficulty: Difficulty = "moyen",
 ): Move | null {
   const position = new Chess(fen);
-  if (position.isGameOver() || position.turn() !== "b") return null;
+  if (position.isGameOver()) return null;
+  // Évaluation du point de vue des blancs : les noirs minimisent, les blancs maximisent.
+  const sign = position.turn() === "b" ? 1 : -1;
 
   const settings = SEARCH_SETTINGS[difficulty];
   const searchState = {
@@ -214,11 +216,12 @@ export function chooseComputerMove(
         searchState,
       );
       position.undo();
+      const value = sign * score;
 
-      if (score < bestScore) {
-        bestScore = score;
+      if (value < bestScore) {
+        bestScore = value;
         bestMoves = [move];
-      } else if (score === bestScore) {
+      } else if (value === bestScore) {
         bestMoves.push(move);
       }
 

@@ -47,7 +47,8 @@ export interface ClientToServerEvents {
   respond_time: (payload: { matchId: string; accept: boolean }) => void;
   request_rematch: (payload: { matchId: string }) => void;
   cancel_rematch: (payload: { matchId: string }) => void;
-  chat_message: (payload: { matchId: string; message: string }) => void;
+  /** clientId : identifiant temporaire du message optimiste (rapprochement à la confirmation). */
+  chat_message: (payload: { matchId: string; message: string; clientId?: string }) => void;
   propose_bet: (payload: { matchId: string; amount: number }) => void;
   accept_bet: (payload: { matchId: string }) => void;
   reject_bet: (payload: { matchId: string }) => void;
@@ -190,7 +191,9 @@ export interface ServerToClientEvents {
   server_error: (payload: { message: string }) => void;
   /** Quota quotidien de l'offre gratuite atteint (au lancement d'une partie uniquement). */
   quota_reached: (payload: { limit: number; used: number; remaining: number | null; resetsAt: string }) => void;
-  chat_message: (payload: { matchId: string; from: string; text: string; ts: number }) => void;
+  chat_message: (payload: ChatMessagePayload) => void;
+  /** Derniers messages de la salle, envoyés à l'entrée (actualisation, reconnexion). */
+  chat_history: (payload: { matchId: string; messages: ChatMessagePayload[] }) => void;
   bet_proposed: (payload: { matchId: string; amount: number; by: string }) => void;
   bet_accepted: (payload: { matchId: string; amount: number; by: string }) => void;
   bet_rejected: (payload: { matchId: string; by: string }) => void;
@@ -204,4 +207,14 @@ export interface QueuedGame {
 export interface GameMovePayload {
   matchId: string;
   move: unknown;
+}
+
+/** Message de chat confirmé par le serveur : `id` est unique et attribué par le serveur. */
+export interface ChatMessagePayload {
+  matchId: string;
+  id: string;
+  clientId: string | null;
+  from: string;
+  text: string;
+  ts: number;
 }
