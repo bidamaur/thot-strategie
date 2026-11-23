@@ -29,8 +29,10 @@ describe("engagement : définitions administrables", () => {
     expect(counts.B).toBeGreaterThan(850);
   });
 
-  it("garde le quota quotidien désactivé par défaut et ses bornes", () => {
-    expect(getSettingDefault("freePlan.dailyGamesEnabled")).toBe(false);
+  it("quota quotidien de l'offre gratuite : 25 parties, actif par défaut (décision du 23/11/2026), bornes", () => {
+    expect(getSettingDefault("freePlan.dailyGamesEnabled")).toBe(true);
+    expect(getSettingDefault("freePlan.dailyGames")).toBe(25);
+    expect(getSettingDefault("freePlan.newPlayerGraceDays")).toBe(0);
     expect(validateSettingValue("freePlan.dailyGames", 0).ok).toBe(false);
     expect(validateSettingValue("freePlan.dailyGames", 10).ok).toBe(true);
   });

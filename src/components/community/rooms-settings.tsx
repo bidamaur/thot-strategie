@@ -2,6 +2,7 @@
 
 import { BarChart3, Bell, BellOff, Crown, Lock, Plus, ShieldCheck } from "lucide-react";
 import Link from "next/link";
+import { openPremiumGate } from "@/lib/client/premium-gate";
 import { useCallback, useEffect, useState } from "react";
 import { api, Avatar, Modal, Notice, RoomIcon, Spinner, useLoadEffect } from "./shared";
 
@@ -95,7 +96,7 @@ export function RoomsPanel({ rooms, onChanged, loggedIn }: { rooms: RoomData[]; 
           <p className="mt-2 text-sm text-ink-muted">
             {premium && premium.privateRooms > 0
               ? `Votre niveau ${premium.tier} permet ${premium.privateRooms} salon(s) privé(s) pour échanger avec vos amis ou votre équipe.`
-              : <>Les salons privés sont un privilège <Link href="/premium" className="text-gold hover:underline">Premium</Link>. Toutes les discussions publiques restent ouvertes à tous.</>}
+              : <>Les salons privés sont un privilège <button type="button" onClick={() => openPremiumGate("PRIVATE_ROOMS")} className="text-gold hover:underline">Premium</button>. Toutes les discussions publiques restent ouvertes à tous.</>}
           </p>
         ) : (
           <ul className="mt-3 divide-y divide-line">

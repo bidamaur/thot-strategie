@@ -1,3 +1,4 @@
+import { ensureDailyTrialNotice } from "@/lib/ai-training/access";
 import { touchPresence } from "@/lib/community/core";
 import { communityRoute, readJson, stringList } from "@/lib/community/http";
 import { listNotifications, markRead, unreadCount } from "@/lib/community/notifications";
@@ -7,6 +8,8 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   return communityRoute(request, async (user) => {
     await touchPresence(user!.id);
+    // Joueurs gratuits : rappel quotidien de la partie offerte contre le niveau 5 (une fois par jour).
+    await ensureDailyTrialNotice(user!.id).catch((error) => console.error("Rappel de l’essai IA :", error));
     if (url.searchParams.get("count")) return { unread: await unreadCount(user!.id) };
     const [page, unread] = await Promise.all([listNotifications(user!.id, url.searchParams.get("cursor")), unreadCount(user!.id)]);
     return { ...page, unread };

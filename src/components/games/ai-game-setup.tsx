@@ -5,13 +5,17 @@ import {
   ArrowRight,
   Bot,
   Crown,
+  Gift,
   LoaderCircle,
+  Lock,
   Swords,
   User,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { openPremiumGate } from "@/lib/client/premium-gate";
 import {
+  DEFAULT_DIFFICULTY,
   DEFAULT_FIRST_PLAYER,
   DIFFICULTIES,
   DRAUGHTS_VARIANTS,
@@ -28,12 +32,27 @@ const FIRST_PLAYER_OPTIONS: { value: FirstPlayer; label: string; hint: string; I
 const VARIANT_STORAGE_KEY = "thot-strategie-draughts-variant";
 
 export function AiGameSetup() {
-  const [difficulty, setDifficulty] = useState<Difficulty>("moyen");
+  const [difficulty, setDifficulty] = useState<Difficulty>(DEFAULT_DIFFICULTY);
+  // Niveaux accessibles (vérifiés de nouveau par le serveur à l'ouverture de la partie).
+  const [access, setAccess] = useState<{ maxLevel: number; premium: boolean; loggedIn: boolean; trial: { enabled: boolean; available: boolean; usedToday: boolean; adSeconds: number } } | null>(null);
   // Non mémorisé : à chaque ouverture de l'entraînement, l'IA commence par défaut.
   const [firstPlayer, setFirstPlayer] = useState<FirstPlayer>(DEFAULT_FIRST_PLAYER);
   const [variant, setVariant] = useState<DraughtsVariant>("INTERNATIONAL");
   const [savingPreference, setSavingPreference] = useState(false);
   const [preferenceMessage, setPreferenceMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/ai/access", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (active && d?.access) setAccess(d.access);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     void fetch("/api/auth/me", { cache: "no-store" })
@@ -142,30 +161,63 @@ export function AiGameSetup() {
           <div className="mt-9 rounded-3xl border border-white/10 bg-white/[0.035] p-5 sm:p-7">
             <fieldset>
               <legend className="mb-3 text-xs font-semibold tracking-[0.18em] text-white/40">
-                DIFFICULTÉ
+                NIVEAU DE L’IA
               </legend>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {DIFFICULTIES.map((level) => (
-                  <button
-                    key={level.value}
-                    type="button"
-                    aria-pressed={difficulty === level.value}
-                    onClick={() => setDifficulty(level.value)}
-                    className={`rounded-xl border px-3 py-3 text-left transition ${
-                      difficulty === level.value
-                        ? "border-emerald-200/50 bg-emerald-200/10 text-emerald-100"
-                        : "border-white/10 bg-black/10 text-white/70 hover:border-white/25"
-                    }`}
-                  >
-                    <span className="block text-sm font-semibold">
-                      {level.label}
-                    </span>
-                    <span className="mt-1 block text-[11px] text-white/40">
-                      {level.description}
-                    </span>
-                  </button>
-                ))}
+              {access?.trial.available && (
+                <p className="mb-3 flex items-start gap-2 rounded-xl border border-gold/25 bg-gold/[0.07] px-3 py-2.5 text-xs text-ink-soft">
+                  <Gift className="mt-0.5 size-4 shrink-0 text-gold" aria-hidden />
+                  <span>
+                    <strong className="text-ink">Aujourd’hui, une partie offerte contre le niveau 5</strong>, l’IA la plus forte
+                    {access.trial.adSeconds > 0 ? `, après une courte publicité (${access.trial.adSeconds} s)` : ""}.
+                  </span>
+                </p>
+              )}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-5">
+                {DIFFICULTIES.map((level) => {
+                  const maxLevel = access?.maxLevel ?? 3;
+                  const trialLevel = level.value === 5 && Boolean(access?.trial.available);
+                  const locked = level.value > maxLevel && !trialLevel;
+                  const selected = difficulty === level.value;
+                  return (
+                    <button
+                      key={level.value}
+                      type="button"
+                      aria-pressed={selected}
+                      aria-label={locked ? `${level.label} : réservé au Premium` : undefined}
+                      onClick={() => (locked ? openPremiumGate("AI_LEVELS") : setDifficulty(level.value))}
+                      className={`rounded-xl border px-3 py-3 text-left transition ${
+                        selected
+                          ? "border-emerald-200/50 bg-emerald-200/10 text-emerald-100"
+                          : locked
+                            ? "border-gold/20 bg-gold/[0.03] text-white/50 hover:border-gold/40"
+                            : "border-white/10 bg-black/10 text-white/70 hover:border-white/25"
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 text-sm font-semibold">
+                        {level.label}
+                        {locked && <Lock className="ml-auto size-3.5 shrink-0 text-gold" aria-hidden />}
+                      </span>
+                      <span className="mt-1 block text-[11px] text-white/40">
+                        {locked
+                          ? level.value === 5 && access?.trial.usedToday
+                            ? "Premium · essai du jour utilisé"
+                            : "Premium"
+                          : trialLevel
+                            ? "1 partie offerte aujourd’hui"
+                            : level.description}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
+              {access && !access.premium && (
+                <p className="mt-3 text-[11px] text-white/40">
+                  Offre gratuite : niveaux 1 à {access.maxLevel}{access.trial.enabled ? " et une partie par jour contre le niveau 5" : ""}.{" "}
+                  <button type="button" onClick={() => openPremiumGate("AI_LEVELS")} className="text-gold hover:underline">
+                    Tous les niveaux avec Premium
+                  </button>
+                </p>
+              )}
             </fieldset>
 
             <fieldset className="mt-7 border-t border-white/[0.08] pt-6">

@@ -1,5 +1,7 @@
 "use client";
 
+import { CountryPaymentNotice, CountrySelect } from "@/components/ui/country";
+import { HomeRankings } from "./home-rankings";
 import { AdSlot } from "@/components/ads/ad-slot";
 import { EngagementPanel } from "@/components/dashboard/engagement-panel";
 import {
@@ -444,8 +446,12 @@ export function DashboardClient() {
                       className="mt-2 w-full rounded-xl border border-white/10 bg-surface-2 px-4 py-3 text-sm text-white outline-none focus:border-emerald-300/60"
                     />
                   </label>
+                  <div className="space-y-2 text-xs font-medium text-white/55 sm:col-span-2">
+                    <label htmlFor="profile-country">Pays de résidence</label>
+                    <CountrySelect id="profile-country" value={country} onChange={setCountry} />
+                    <CountryPaymentNotice />
+                  </div>
                   {([
-                    ["country", "Pays", country, setCountry],
                     ["city", "Ville", city, setCity],
                     ["neighborhood", "Quartier", neighborhood, setNeighborhood],
                   ] as const).map(([id, label, value, setValue]) => (
@@ -771,6 +777,10 @@ export function DashboardClient() {
         </section>
 
         {profile && <EngagementPanel />}
+
+        <div className="mt-8">
+          <HomeRankings />
+        </div>
 
         <footer className="mt-10 flex flex-col justify-between gap-2 border-t border-white/[0.08] pt-5 text-xs text-white/30 sm:flex-row">
           <span>THOT STRATÉGIE · Jeux de dames et d&apos;échecs</span>

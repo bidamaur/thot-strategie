@@ -127,7 +127,7 @@ describe("dames internationales : promotion pendant une rafle", () => {
       [6, 1, "w"],
       [5, 2, "b"], [3, 4, "b"], [1, 6, "b"], [1, 8, "b"], [0, 1, "b"],
     ]);
-    const move = chooseDraughtsMove(start, "moyen");
+    const move = chooseDraughtsMove(start, 3);
     expect(move?.captures).toHaveLength(4);
     expect(end(move!.path)).toEqual(at(2, 9));
   });

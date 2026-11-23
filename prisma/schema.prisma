@@ -96,6 +96,13 @@ model User {
   exitRequestsReceived      GameExitRequest[]             @relation("ExitTarget")
   clubBoardsHome            ClubMatchBoard[]              @relation("ClubBoardHome")
   clubBoardsAway            ClubMatchBoard[]              @relation("ClubBoardAway")
+  /// Pays confirmé par l'administration (code ISO, ex. "CM") : prime sur le pays déclaré pour les paiements.
+  verifiedCountryCode       String?                       @db.VarChar(2)
+  payments                  Payment[]                     @relation("PaymentPayer")
+  paymentsReviewed          Payment[]                     @relation("PaymentReviewer")
+  premiumInterests          PremiumInterest[]
+  availability              PlayerAvailability?
+  aiDailyTrials             AiDailyTrial[]
 }
 
 model UserSession {
@@ -146,6 +153,10 @@ model Match {
   /// Match de tournoi joué par cette partie (résultat reporté par le serveur).
   tournamentMatchId    String?          @unique
   tournamentMatch      TournamentMatch? @relation(fields: [tournamentMatchId], references: [id], onDelete: SetNull)
+  /// Revanche : partie précédente du même affront (série de parties entre les deux joueurs).
+  rematchOfId          String?
+  rematchOf            Match?           @relation("MatchRematch", fields: [rematchOfId], references: [id], onDelete: SetNull)
+  rematches            Match[]          @relation("MatchRematch")
   friendChallenge      FriendChallenge?
   clubMatchBoard       ClubMatchBoard?
   gameBet              GameBet?
@@ -162,6 +173,7 @@ model Match {
   @@index([rated])
   @@index([betStatus])
   @@index([mode, status])
+  @@index([rematchOfId])
 }
 
 model PlayerRating {
@@ -1186,4 +1198,112 @@ model GameExitRequest {
 
   @@index([targetId, status])
   @@index([requesterId, createdAt])
+}
+
+/// Paiement déclaré par un joueur (Premium ou don). Mobile Money : vérifié et
+/// validé manuellement par un administrateur. Prévu pour d'autres prestataires
+/// (carte, PayPal) sans changer de table.
+model Payment {
+  id               String    @id @default(cuid())
+  /// Référence interne lisible communiquée au joueur (ex. PAY-7K3F9Q2M).
+  reference        String    @unique @db.VarChar(20)
+  userId           String
+  /// PREMIUM | DONATION
+  purpose          String    @db.VarChar(12)
+  /// ORANGE_MONEY | MTN_MOMO
+  provider         String    @db.VarChar(20)
+  /// PENDING | VALIDATED | REJECTED
+  status           String    @default("PENDING") @db.VarChar(12)
+  tierLevel        Int?
+  tierName         String?   @db.VarChar(60)
+  durationDays     Int?
+  /// Montant attendu, figé par le serveur au moment de la déclaration (FCFA).
+  expectedAmount   Int
+  /// Montant que le joueur déclare avoir envoyé (FCFA).
+  declaredAmount   Int
+  /// Montant réellement reçu, confirmé par l'administrateur à la validation (FCFA).
+  receivedAmount   Int?
+  currency         String    @default("XAF") @db.VarChar(3)
+  senderPhone      String    @db.VarChar(20)
+  recipientPhone   String    @db.VarChar(20)
+  /// Référence de transaction du SMS opérateur, normalisée (majuscules, sans espaces).
+  transactionRef   String    @db.VarChar(60)
+  paidAt           DateTime
+  proofImage       String?   @db.VarChar(300)
+  country          String?   @db.VarChar(80)
+  countryCode      String?   @db.VarChar(2)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  reviewedById     String?
+  reviewedAt       DateTime?
+  rejectReason     String?   @db.VarChar(40)
+  rejectNote       String?   @db.VarChar(300)
+  premiumStartsAt  DateTime?
+  premiumExpiresAt DateTime?
+  user             User      @relation("PaymentPayer", fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy       User?     @relation("PaymentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([purpose, status, createdAt])
+  @@index([userId, createdAt])
+  @@index([provider, transactionRef])
+}
+
+/// Intérêt commercial agrégé : une ligne par joueur, fonctionnalité et niveau.
+model PremiumInterest {
+  id         String    @id @default(cuid())
+  userId     String
+  /// Fonctionnalité sollicitée (liste fermée, lib/monetization/interest.ts).
+  feature    String    @db.VarChar(40)
+  /// Niveau Premium visé (0 = non précisé).
+  tierLevel  Int       @default(0)
+  country    String?   @db.VarChar(80)
+  countryCode String?  @db.VarChar(2)
+  views      Int       @default(1)
+  firstAt    DateTime  @default(now())
+  lastAt     DateTime  @default(now())
+  /// Inscription volontaire à la liste d'attente (prévenu au lancement).
+  waitlist   Boolean   @default(false)
+  waitlistAt DateTime?
+  notifiedAt DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, feature, tierLevel])
+  @@index([feature])
+  @@index([waitlist, notifiedAt])
+  @@index([firstAt])
+}
+
+/// Disponibilités habituelles d'un joueur (strictement indicatives).
+model PlayerAvailability {
+  userId         String    @id
+  /// Fuseau horaire IANA du joueur (ex. Africa/Douala).
+  timeZone       String    @db.VarChar(64)
+  /// {"1":[["18:00","21:00"]], …, "7":[]} — 1 = lundi … 7 = dimanche.
+  weekly         Json      @default("{}")
+  /// Modification temporaire : remplace `weekly` du `overrideFrom` au `overrideTo` inclus.
+  overrideFrom   DateTime? @db.Date
+  overrideTo     DateTime? @db.Date
+  overrideWeekly Json?
+  updatedAt      DateTime  @updatedAt
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Essai quotidien offert contre le niveau 5 de l'IA (offre gratuite) : une
+/// ligne par joueur et par jour. Notification, publicité vue, puis partie lancée.
+model AiDailyTrial {
+  id          String    @id @default(cuid())
+  userId      String
+  /// Jour (heure du Cameroun), format AAAA-MM-JJ.
+  day         String    @db.VarChar(10)
+  notifiedAt  DateTime?
+  adStartedAt DateTime?
+  usedAt      DateTime?
+  /// CHESS | CHECKERS
+  gameType    String?   @db.VarChar(10)
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, day])
+  @@index([day])
 }

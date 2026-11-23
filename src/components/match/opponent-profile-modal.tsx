@@ -15,8 +15,8 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { openPremiumGate } from "@/lib/client/premium-gate";
 import type { OpponentProfile } from "@/lib/opponent-profile/service";
 
 type Advanced = OpponentProfile["advanced"];
@@ -252,9 +252,9 @@ function PremiumTeaser() {
         <p className="max-w-xs text-xs text-ink-soft">
           Bilan détaillé, séries, 5 derniers adversaires, tournois et compétitions rémunérées de vos adversaires.
         </p>
-        <Link href="/premium" className="btn btn-primary min-h-0 px-3 py-1.5 text-sm">
+        <button type="button" onClick={() => openPremiumGate("OPPONENT_STATS")} className="btn btn-primary min-h-0 px-3 py-1.5 text-sm">
           <Crown className="size-4" /> Découvrir Premium
-        </Link>
+        </button>
       </div>
     </div>
   );

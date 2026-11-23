@@ -17,6 +17,8 @@
     "test:community": "tsx scripts/test-community.ts",
     "test:engagement": "tsx scripts/test-engagement.ts",
     "test:opponent-profile": "tsx scripts/test-opponent-profile.ts",
+    "test:monetization": "tsx scripts/test-monetization.ts",
+    "test:features": "tsx scripts/test-features-1123.ts",
     "test:game-exit": "tsx scripts/test-game-exit.ts && tsx scripts/test-game-exit-server.ts"
   },
   "dependencies": {

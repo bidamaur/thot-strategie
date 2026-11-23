@@ -34,6 +34,7 @@ import { planChessMove, planDraughtsMove, usePieceMotion, type PlannedMotion } f
 import { PieceMotionLayer, prefersReducedMotion } from "@/components/board/piece-motion";
 import { Modal } from "@/components/community/shared";
 import { GameResultModal } from "@/components/games/game-result-modal";
+import { SessionScore } from "./session-score";
 import { OpponentProfileModal } from "@/components/match/opponent-profile-modal";
 import { DragGhost } from "@/components/games/drag-ghost";
 import { useBoardTouchGuard } from "@/components/games/use-board-touch-guard";
@@ -1243,6 +1244,8 @@ export function OnlineMatchClient({ matchId }: OnlineMatchClientProps) {
             ))}
           </ol>
         )}
+
+        {!match.tournamentId && <SessionScore matchId={match.matchId} status={match.status} selfId={match.playerId} />}
 
         {playerStrip("opponent")}
 

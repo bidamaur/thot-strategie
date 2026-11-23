@@ -1,6 +1,6 @@
 import { Prisma } from "@/generated/prisma-client";
 import { prisma } from "@/lib/prisma";
-import { effectiveLevel, getPrivileges } from "@/lib/premium/privileges";
+import { badgeLevel, getPrivileges } from "@/lib/premium/privileges";
 import { getSettings } from "@/lib/settings/service";
 import type { SettingKey } from "@/lib/settings/registry";
 
@@ -171,7 +171,6 @@ function ratingFor(rows: PlayerCardRow["playerRatings"], variants: string[]): nu
 }
 
 export function playerCard(row: PlayerCardRow) {
-  const level = effectiveLevel(row);
   return {
     id: row.id,
     username: row.username,
@@ -179,7 +178,8 @@ export function playerCard(row: PlayerCardRow) {
     elo: row.elo,
     chessElo: ratingFor(row.playerRatings, ["CHESS"]),
     draughtsElo: ratingFor(row.playerRatings, ["INTERNATIONAL", "ENGLISH"]),
-    premiumLevel: Number.isFinite(level) && level > 0 ? level : 0,
+    // Badge Premium : abonnement en cours et privilège « badge » du niveau.
+    premiumLevel: badgeLevel(row),
     isAdmin: row.isAdmin,
     // Le joueur peut masquer sa présence (paramètres de confidentialité).
     online: hidesPresence(row.privacySettings) ? false : isOnline(row),
@@ -202,13 +202,13 @@ export const AUTHOR_SELECT = {
 } satisfies Prisma.UserSelect;
 
 export function authorCard(row: Prisma.UserGetPayload<{ select: typeof AUTHOR_SELECT }>) {
-  const level = effectiveLevel(row);
   return {
     id: row.id,
     username: row.username,
     avatar: row.avatar,
     elo: row.elo,
-    premiumLevel: Number.isFinite(level) && level > 0 ? level : 0,
+    // Badge Premium : abonnement en cours et privilège « badge » du niveau.
+    premiumLevel: badgeLevel(row),
     isAdmin: row.isAdmin,
   };
 }

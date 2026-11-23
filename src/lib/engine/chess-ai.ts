@@ -12,14 +12,15 @@ const PIECE_VALUES = {
 
 const MATE_SCORE = 100_000;
 
-const SEARCH_SETTINGS: Record<
+export const SEARCH_SETTINGS: Record<
   Difficulty,
-  { depth: number; nodes: number; timeMs: number }
+  { depth: number; nodes: number; timeMs: number; blunder: number }
 > = {
-  simple: { depth: 1, nodes: 600, timeMs: 500 },
-  moyen: { depth: 3, nodes: 1_500, timeMs: 1_500 },
-  expert: { depth: 5, nodes: 3_000, timeMs: 3_000 },
-  pro: { depth: 7, nodes: 5_000, timeMs: 4_500 },
+  1: { depth: 1, nodes: 400, timeMs: 300, blunder: 0.35 },
+  2: { depth: 2, nodes: 3_000, timeMs: 800, blunder: 0.12 },
+  3: { depth: 3, nodes: 15_000, timeMs: 1_500, blunder: 0 },
+  4: { depth: 4, nodes: 60_000, timeMs: 3_000, blunder: 0 },
+  5: { depth: 6, nodes: 200_000, timeMs: 6_000, blunder: 0 },
 };
 
 interface SearchEntry {
@@ -167,7 +168,8 @@ function search(
 
 export function chooseComputerMove(
   fen: string,
-  difficulty: Difficulty = "moyen",
+  difficulty: Difficulty = 3,
+  random: () => number = Math.random,
 ): Move | null {
   const position = new Chess(fen);
   if (position.isGameOver()) return null;
@@ -186,6 +188,10 @@ export function chooseComputerMove(
   let previousBestMove: string | undefined;
 
   const legalMoves = orderMoves(position.moves({ verbose: true }));
+  // Niveaux faibles : coup volontairement aléatoire de temps en temps.
+  if (settings.blunder > 0 && random() < settings.blunder) {
+    return legalMoves[Math.floor(random() * legalMoves.length)] ?? null;
+  }
   for (let depth = 1; depth <= settings.depth; depth += 1) {
     let bestScore = Infinity;
     let bestMoves: Move[] = [];
@@ -236,7 +242,7 @@ export function chooseComputerMove(
     }
 
     if (completed && bestMoves.length > 0) {
-      completedBestMove = bestMoves[Math.floor(Math.random() * bestMoves.length)];
+      completedBestMove = bestMoves[Math.floor(random() * bestMoves.length)];
       previousBestMove = `${completedBestMove.from}${completedBestMove.to}`;
     }
 

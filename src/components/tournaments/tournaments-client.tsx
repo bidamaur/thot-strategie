@@ -1,5 +1,6 @@
 "use client";
 
+import { CountrySelect } from "@/components/ui/country";
 import { AdSlot } from "@/components/ads/ad-slot";
 import {
   ArrowLeft,
@@ -15,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
+import { openPremiumGate } from "@/lib/client/premium-gate";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface UserOption {
@@ -489,7 +491,7 @@ export function TournamentsClient() {
                   <h2 className="text-lg font-semibold">Activer le compte Premium</h2>
                 </div>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-white/55">
-                  Simulation d’un paiement unique de <strong>5 000 FCFA</strong>.
+                  Simulation d’un paiement du premier niveau Premium (tarif du paramétrage).
                   Aucun solde portefeuille ne sera débité ; l’opération sera marquée
                   comme paiement fictif en base.
                 </p>
@@ -505,7 +507,7 @@ export function TournamentsClient() {
                 ) : (
                   <CircleDollarSign size={18} />
                 )}
-                Payer 5 000 FCFA (simulation)
+                Activer (simulation)
               </button>
             </div>
           </section>
@@ -523,7 +525,8 @@ export function TournamentsClient() {
             <p className="mt-2 text-xs text-white/45">
               Le Survival est ouvert à tous les joueurs disposant du minimum de points fixé par
               l’administration ; les autres formats, les tournois privés et les portées étendues
-              dépendent de votre niveau <a href="/premium" className="underline">Premium</a>.
+              dépendent de votre niveau{" "}
+              <button type="button" onClick={() => openPremiumGate("TOURNAMENT_ORGANIZATION")} className="underline">Premium</button>.
             </p>
             <p className="mt-2 text-sm leading-6 text-white/55">
               {tournamentType === "SURVIVAL_BANK"
@@ -651,10 +654,10 @@ export function TournamentsClient() {
                 Région
                 <input value={region} onChange={(event) => setRegion(event.target.value)} maxLength={80} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
               </label>
-              <label className="text-sm text-white/70">
+              <div className="text-sm text-white/70">
                 Pays
-                <input value={country} onChange={(event) => setCountry(event.target.value)} maxLength={80} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />
-              </label>
+                <CountrySelect value={country} onChange={setCountry} className="mt-1" />
+              </div>
               <label className="text-sm text-white/70">
                 Continent
                 <input value={continent} onChange={(event) => setContinent(event.target.value)} maxLength={80} className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-white" />

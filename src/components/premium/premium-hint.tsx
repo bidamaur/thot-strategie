@@ -1,9 +1,10 @@
 "use client";
 
 import { Crown } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { openPremiumGate } from "@/lib/client/premium-gate";
 import { track } from "@/lib/client/telemetry";
+import { featureFromContext } from "@/lib/monetization/rules";
 
 let hintsEnabled: Promise<boolean> | null = null;
 
@@ -44,9 +45,16 @@ export function PremiumHint({ context, title, children, cta = "Voir les niveaux 
       <div className="min-w-0">
         <p className="font-medium text-ink">{title}</p>
         <div className="mt-0.5 text-xs leading-5 text-ink-muted">{children}</div>
-        <Link href={`/premium?from=${encodeURIComponent(context)}`} onClick={() => track("premium_hint_click", { context })} className="mt-1.5 inline-block text-xs font-semibold text-gold hover:underline">
+        <button
+          type="button"
+          onClick={() => {
+            track("premium_hint_click", { context });
+            openPremiumGate(featureFromContext(context));
+          }}
+          className="mt-1.5 inline-block text-xs font-semibold text-gold hover:underline"
+        >
           {cta} →
-        </Link>
+        </button>
       </div>
     </aside>
   );

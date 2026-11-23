@@ -141,7 +141,8 @@ export function toPublicProfile(user: {
     id: user.id,
     username: user.username,
     isAdmin: user.isAdmin,
-    isPremium: user.isPremium,
+    // Premium en cours uniquement : un abonnement expiré n'affiche plus la couronne.
+    isPremium: user.isPremium && (!user.premiumExpiresAt || user.premiumExpiresAt > new Date()),
     pointsFree: user.pointsFree,
     walletReal: user.walletReal.toString(),
     walletLocked: user.walletLocked?.toString() ?? "0",

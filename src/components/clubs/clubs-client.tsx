@@ -1,5 +1,6 @@
 "use client";
 
+import { CountrySelect } from "@/components/ui/country";
 import { InterclubStandings } from "@/components/community/interclub";
 import { AdSlot } from "@/components/ads/ad-slot";
 import { Lock, MapPin, Plus, Search, Trophy, Users } from "lucide-react";
@@ -88,10 +89,10 @@ export function ClubsClient() {
             Ville
             <input maxLength={80} value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} className="field mt-1.5" />
           </label>
-          <label className="text-xs font-medium text-ink-muted">
+          <div className="text-xs font-medium text-ink-muted">
             Pays
-            <input maxLength={80} value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} className="field mt-1.5" />
-          </label>
+            <CountrySelect value={form.country} onChange={(name) => setForm({ ...form, country: name })} className="mt-1.5" />
+          </div>
           <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
             <button type="submit" disabled={submitting} className="btn btn-primary">
               {submitting ? "Création…" : "Créer le club"}

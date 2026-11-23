@@ -21,7 +21,8 @@ export async function GET(request: Request) {
   ] = await Promise.all([
     prisma.user.count(),
     prisma.user.count({ where: { isAdmin: true } }),
-    prisma.user.count({ where: { isPremium: true } }),
+    // Abonnements en cours uniquement (les abonnements expirés ne comptent plus).
+    prisma.user.count({ where: { isPremium: true, isAdmin: false, OR: [{ premiumExpiresAt: null }, { premiumExpiresAt: { gt: new Date() } }] } }),
     prisma.tournament.count(),
     prisma.tournament.count({ where: { status: "IN_PROGRESS" } }),
     prisma.tournament.count({ where: { status: "COMPLETED" } }),

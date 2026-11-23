@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { humanColorFor, type Difficulty, type FirstPlayer } from "@/lib/engine/game-settings";
+import { DIFFICULTIES, humanColorFor, type Difficulty, type FirstPlayer } from "@/lib/engine/game-settings";
 import { requestComputerMove } from "@/lib/game-ai-client";
 import { playPieceMoveSound, waitForOpponent } from "@/lib/game-feedback";
 import { planChessMove, usePieceMotion } from "@/components/board/motion-plans";
@@ -48,6 +48,10 @@ function renderPieceGhost(color: "w" | "b", type: string) {
 
 interface LocalChessGameProps {
   initialDifficulty: Difficulty;
+  /** Niveau maximal accessible (offre gratuite : 3, Premium : 5). */
+  maxLevel?: Difficulty;
+  /** Partie offerte du jour contre le niveau 5 (une seule partie). */
+  trial?: boolean;
   /** Qui joue le premier coup (choisi au lancement de l'entraînement). */
   firstPlayer: FirstPlayer;
 }
@@ -74,6 +78,8 @@ function replayHistory(history: string[]): Chess {
 
 export function LocalChessGame({
   initialDifficulty,
+  maxLevel = 5,
+  trial = false,
   firstPlayer,
 }: LocalChessGameProps) {
   const humanColor = humanColorFor(firstPlayer, STARTING_COLOR);
@@ -217,7 +223,14 @@ export function LocalChessGame({
   );
   const { drag, beginDrag, consumeClick } = useBoardPointerDrag(handleDrop);
 
+  // Essai offert : une seule partie au niveau 5 ; la suivante repasse au niveau autorisé.
+  const [trialActive, setTrialActive] = useState(trial);
+
   function startNewGame() {
+    if (trialActive) {
+      setTrialActive(false);
+      setDifficulty((d) => (d > maxLevel ? maxLevel : d));
+    }
     setMoveHistory([]);
     setSelectedSquare(null);
     setLegalDestinations([]);
@@ -314,7 +327,7 @@ export function LocalChessGame({
                   </span>
                   <div>
                     <p className="text-sm font-semibold">Adversaire</p>
-                    <p className="text-xs text-white/40">IA locale · {difficulty}</p>
+                    <p className="text-xs text-white/40">IA locale · {DIFFICULTIES.find((item) => item.value === difficulty)?.label}</p>
                   </div>
                 </div>
                 <Bot className="text-emerald-200/70" size={20} />
@@ -459,6 +472,8 @@ export function LocalChessGame({
                   value={difficulty}
                   onChange={setDifficulty}
                   disabled={moveHistory.length > 0}
+                  maxLevel={maxLevel}
+                  unlocked={trialActive ? 5 : null}
                 />
               </section>
 

@@ -32,6 +32,7 @@ export type SettingCategory =
   | "tournaments"
   | "survival"
   | "premium"
+  | "monetization"
   | "clubs"
   | "community"
   | "storage"
@@ -76,6 +77,10 @@ export const SETTING_CATEGORIES: Record<
   premium: {
     label: "Premium",
     description: "Niveaux, tarifs, privilèges et limites des abonnements.",
+  },
+  monetization: {
+    label: "Monétisation",
+    description: "Paiements Mobile Money (Orange, MTN), dons, liste d'attente et messages affichés aux joueurs. Les tarifs et durées sont dans « Premium ».",
   },
   clubs: {
     label: "Clubs",
@@ -171,10 +176,15 @@ export interface PremiumTier {
   priceCfa: number;
   durationDays: number;
   tagline: string;
+  /** Niveau proposé à l'achat (false : affiché mais non vendu). Absent = true. */
+  available?: boolean;
   privileges: PremiumPrivileges;
 }
 
 const BASE_FORMATS = ["SURVIVAL_BANK"];
+
+/** Code USSD : chiffres, * et #, avec {NUMERO} et {MONTANT} placés librement. */
+export const USSD_PATTERN = "^[0-9*#]*(\\{(NUMERO|MONTANT)\\}[0-9*#]*){0,2}$";
 
 export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
   {
@@ -212,11 +222,12 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
     name: "Bronze",
     priceCfa: 2_000,
     durationDays: 30,
-    tagline: "Statistiques détaillées et tournois de quartier.",
+    tagline: "Statistiques détaillées, parties illimitées et sans publicité.",
     privileges: {
       maxActiveTournaments: 2,
       maxTournamentPlayers: 16,
-      maxScope: "NEIGHBORHOOD",
+      // Jamais inférieur à l'offre gratuite (ville).
+      maxScope: "CITY",
       tournamentFormats: [...BASE_FORMATS, "ARENA", "ELIMINATION"],
       privateTournaments: true,
       paidTournaments: false,
@@ -247,7 +258,7 @@ export const DEFAULT_PREMIUM_TIERS: PremiumTier[] = [
     privileges: {
       maxActiveTournaments: 3,
       maxTournamentPlayers: 32,
-      maxScope: "CITY",
+      maxScope: "REGION",
       tournamentFormats: [...BASE_FORMATS, "ARENA", "ELIMINATION", "SWISS", "ROUND_ROBIN"],
       privateTournaments: true,
       paidTournaments: true,
@@ -393,6 +404,7 @@ export const AD_PLACEMENTS = [
   { id: "leaderboard", label: "Classements" },
   { id: "clubs", label: "Clubs" },
   { id: "wallet", label: "Portefeuille" },
+  { id: "ai_trial", label: "Avant l'essai offert contre l'IA niveau 5" },
 ] as const;
 
 export type AdPlacement = (typeof AD_PLACEMENTS)[number]["id"];
@@ -495,8 +507,40 @@ export const SETTING_DEFINITIONS = [
   { key: "survival_bank_rebuy_enabled", category: "survival", type: "boolean", default: false, label: "Réintégration autorisée par défaut" },
   { key: "survival_bank_rebuy_cost", category: "survival", type: "number", default: 0, min: 0, max: 1_000_000, integer: true, label: "Coût de réintégration", unit: "pts" },
 
+  // ── Classements de l'accueil ─────────────────────────────────────────
+  { key: "rankings.homeEnabled", category: "rating", type: "boolean", default: true, label: "Accueil : Top 20 des joueurs", description: "Indice Thot = 1000 × (poids ELO × centile ELO + poids points × centile points classiques)." },
+  { key: "rankings.eloWeight", category: "rating", type: "number", default: 60, min: 0, max: 100, integer: true, unit: "%", label: "Top 20 : poids de l'ELO dans l'indice", description: "Le reste du poids va aux points classiques (non monétisés)." },
+  { key: "rankings.minGames", category: "rating", type: "number", default: 3, min: 0, max: 1000, integer: true, unit: "parties", label: "Classements de l'accueil : parties classées minimum" },
+  { key: "rankings.goldEnabled", category: "rating", type: "boolean", default: true, label: "Accueil : Top 10 Or (comptes monétisés)", description: "Affiché seulement si les parties rémunérées sont actives. Les montants ne sont jamais affichés." },
+  { key: "rankings.goldEloWeight", category: "rating", type: "number", default: 50, min: 0, max: 100, integer: true, unit: "%", label: "Top 10 Or : poids de l'ELO dans l'indice", description: "Le reste du poids va aux points argent (solde disponible + bloqué)." },
+
   // ── Premium ──────────────────────────────────────────────────────────
-  { key: "premium.tiers", category: "premium", type: "json", default: DEFAULT_PREMIUM_TIERS, critical: true, label: "Niveaux, tarifs et privilèges", description: "Tableau des niveaux 0 à 5 avec leurs privilèges et limites." },
+  { key: "premium.tiers", category: "premium", type: "json", default: DEFAULT_PREMIUM_TIERS, critical: true, label: "Niveaux, tarifs et privilèges", description: "Tableau des niveaux 0 à 5 : nom, tarif (priceCfa, FCFA), durée (durationDays), mise en vente (available: true/false), privilèges et limites. Les tarifs affichés et payés viennent uniquement d'ici." },
+
+  // ── Monétisation ─────────────────────────────────────────────────────
+  { key: "payments.cm.enabled", category: "monetization", type: "boolean", default: true, critical: true, label: "Paiements Mobile Money au Cameroun", description: "Les joueurs camerounais peuvent déclarer un paiement Orange Money ou MTN Mobile Money. Chaque paiement est vérifié et validé par un administrateur." },
+  { key: "payments.international.enabled", category: "monetization", type: "boolean", default: false, critical: true, label: "Paiements internationaux", description: "Aucun prestataire international n'est branché : tant que ce réglage est désactivé, les joueurs hors Cameroun voient le message de lancement et peuvent rejoindre la liste d'attente." },
+  { key: "payments.internationalLaunchDate", category: "monetization", type: "string", default: "2027-02-01", maxLength: 10, pattern: "^\\d{4}-\\d{2}-\\d{2}$", placeholder: "2027-02-01", label: "Date prévisionnelle du lancement international", description: "Affichée aux joueurs sous la forme « février 2027 »." },
+  { key: "payments.orange.enabled", category: "monetization", type: "boolean", default: true, label: "Orange Money : actif" },
+  { key: "payments.orange.number", category: "monetization", type: "string", default: "656716849", maxLength: 9, pattern: "^6\\d{8}$", placeholder: "656716849", critical: true, label: "Orange Money : numéro destinataire", description: "9 chiffres, sans indicatif." },
+  { key: "payments.orange.ussd", category: "monetization", type: "string", default: "#150*1*1*{NUMERO}*{MONTANT}#", maxLength: 60, pattern: USSD_PATTERN, placeholder: "#150*1*1*{NUMERO}*{MONTANT}#", critical: true, label: "Orange Money : code USSD de transfert", description: "Placez {NUMERO} et {MONTANT} à l'endroit voulu : ils sont remplacés par le numéro destinataire et le montant exact. Vide : aucun code proposé, seules les instructions s'affichent." },
+  { key: "payments.orange.instructions", category: "monetization", type: "string", default: "Composez le code sur le téléphone de votre compte Orange Money, vérifiez le bénéficiaire et le montant, puis confirmez avec votre code secret. Conservez le SMS de confirmation.", maxLength: 600, label: "Orange Money : instructions" },
+  { key: "payments.mtn.enabled", category: "monetization", type: "boolean", default: true, label: "MTN Mobile Money : actif" },
+  { key: "payments.mtn.number", category: "monetization", type: "string", default: "677125468", maxLength: 9, pattern: "^6\\d{8}$", placeholder: "677125468", critical: true, label: "MTN Mobile Money : numéro destinataire", description: "9 chiffres, sans indicatif." },
+  { key: "payments.mtn.ussd", category: "monetization", type: "string", default: "*126*1*1*{NUMERO}*{MONTANT}#", maxLength: 60, pattern: USSD_PATTERN, placeholder: "*126*1*1*{NUMERO}*{MONTANT}#", critical: true, label: "MTN Mobile Money : code USSD de transfert", description: "Placez {NUMERO} et {MONTANT} à l'endroit voulu. Vide : aucun code proposé." },
+  { key: "payments.mtn.instructions", category: "monetization", type: "string", default: "Composez le code sur le téléphone de votre compte MTN Mobile Money, vérifiez le bénéficiaire et le montant, puis confirmez avec votre code secret. Conservez le SMS de confirmation.", maxLength: 600, label: "MTN Mobile Money : instructions" },
+  { key: "payments.proofImageEnabled", category: "monetization", type: "boolean", default: true, label: "Capture d'écran du SMS (facultative) acceptée" },
+  { key: "payments.submittedMessage", category: "monetization", type: "string", default: "Votre déclaration de paiement a été transmise à notre équipe administrative. Votre abonnement Premium sera activé après vérification effective de la transaction.", maxLength: 400, label: "Message après une déclaration de paiement Premium" },
+  { key: "payments.comingSoonTitle", category: "monetization", type: "string", default: "Les espaces Premium seront disponibles à partir de {DATE}.", maxLength: 160, label: "Titre du message « Premium bientôt disponible »", description: "{DATE} est remplacé par le mois de lancement (ex. février 2027)." },
+  { key: "payments.comingSoonBody", category: "monetization", type: "string", default: "Nous préparons actuellement le lancement de nos offres Premium afin de vous proposer une expérience encore plus enrichissante. Merci pour votre intérêt et votre patience.", maxLength: 500, label: "Texte du message « Premium bientôt disponible »" },
+  { key: "waitlist.enabled", category: "monetization", type: "boolean", default: true, label: "Liste d'attente « Me prévenir au lancement »" },
+  { key: "donations.enabled", category: "monetization", type: "boolean", default: true, label: "Dons actifs", description: "Bouton « Soutenir la plateforme ». Un don ne donne aucun avantage et n'active jamais le Premium." },
+  { key: "donations.amounts", category: "monetization", type: "json", default: [500, 1000, 2500, 5000, 10000], label: "Montants de don proposés (FCFA)", description: "Liste d'entiers, ex. [500, 1000, 2500, 5000, 10000]." },
+  { key: "donations.customAmountEnabled", category: "monetization", type: "boolean", default: true, label: "Montant de don libre" },
+  { key: "donations.minAmount", category: "monetization", type: "number", default: 100, min: 50, max: 1_000_000, integer: true, unit: "FCFA", label: "Don minimum" },
+  { key: "donations.maxAmount", category: "monetization", type: "number", default: 500_000, min: 100, max: 10_000_000, integer: true, unit: "FCFA", label: "Don maximum" },
+  { key: "donations.submittedMessage", category: "monetization", type: "string", default: "Merci ! Votre déclaration de don a été transmise. Elle sera confirmée après vérification de la transaction.", maxLength: 400, label: "Message après une déclaration de don" },
+  { key: "donations.internationalMessage", category: "monetization", type: "string", default: "Les donations internationales seront disponibles à partir de {DATE}. Merci de votre intérêt et de votre volonté de soutenir notre communauté.", maxLength: 400, label: "Message des dons hors Cameroun", description: "{DATE} est remplacé par le mois de lancement." },
 
   // ── Clubs ────────────────────────────────────────────────────────────
   // ── Publicité ────────────────────────────────────────────────────────
@@ -537,10 +581,13 @@ export const SETTING_DEFINITIONS = [
   { key: "images.maxAvatarDimension", category: "storage", type: "number", default: 256, min: 64, max: 1024, integer: true, label: "Taille maximale des avatars", unit: "px" },
   { key: "images.maxLogoDimension", category: "storage", type: "number", default: 320, min: 64, max: 1024, integer: true, label: "Taille maximale des logos de club", unit: "px" },
   // ── Offre gratuite ───────────────────────────────────────────────────
-  { key: "freePlan.dailyGamesEnabled", category: "freePlan", type: "boolean", default: false, critical: true, label: "Limiter le nombre de parties gratuites par jour", description: "Désactivé par défaut : à activer après validation. Ne concerne que les parties en ligne amicales et classées lancées par le joueur." },
-  { key: "freePlan.dailyGames", category: "freePlan", type: "number", default: 10, min: 1, max: 500, integer: true, label: "Parties en ligne gratuites par jour", unit: "parties", description: "Comptées au lancement ; les parties annulées avant le 2e coup ne comptent pas. Remise à zéro à minuit (heure du serveur)." },
-  { key: "freePlan.newPlayerGraceDays", category: "freePlan", type: "number", default: 7, min: 0, max: 90, integer: true, label: "Période de découverte sans limite", unit: "jours", description: "Les nouveaux comptes jouent sans limite pendant cette période." },
+  { key: "freePlan.dailyGamesEnabled", category: "freePlan", type: "boolean", default: true, critical: true, label: "Limiter le nombre de parties gratuites par jour", description: "Activé (décision du 23/11/2026). Ne concerne que les parties en ligne amicales et classées lancées par le joueur ; le Premium « parties illimitées » n'est pas limité." },
+  { key: "freePlan.dailyGames", category: "freePlan", type: "number", default: 25, min: 1, max: 500, integer: true, label: "Parties en ligne gratuites par jour", unit: "parties", description: "Comptées au lancement ; les parties annulées avant le 2e coup ne comptent pas. Remise à zéro à minuit (heure du serveur)." },
+  { key: "freePlan.newPlayerGraceDays", category: "freePlan", type: "number", default: 0, min: 0, max: 90, integer: true, label: "Période de découverte sans limite", unit: "jours", description: "Les nouveaux comptes jouent sans limite pendant cette période." },
   { key: "freePlan.countFriendChallenges", category: "freePlan", type: "boolean", default: true, label: "Les défis entre amis comptent dans le quota", description: "Les revanches comptent toujours : ce sont de nouvelles parties." },
+  { key: "ai.freeMaxLevel", category: "freePlan", type: "number", default: 3, min: 1, max: 5, integer: true, label: "Entraînement : niveau d'IA maximal de l'offre gratuite", description: "Les niveaux supérieurs sont réservés au Premium (sauf l'essai quotidien du niveau 5)." },
+  { key: "ai.dailyTrialEnabled", category: "freePlan", type: "boolean", default: true, label: "Entraînement : une partie offerte par jour contre le niveau 5", description: "Pour les joueurs gratuits, après une publicité. Le joueur reçoit une notification chaque jour où l'essai est disponible." },
+  { key: "ai.trialAdSeconds", category: "freePlan", type: "number", default: 15, min: 0, max: 120, integer: true, unit: "s", label: "Durée de la publicité avant l'essai du niveau 5", description: "Vérifiée par le serveur : la partie ne peut pas démarrer avant la fin du délai." },
   { key: "freePlan.warnAtRemaining", category: "freePlan", type: "number", default: 2, min: 0, max: 50, integer: true, label: "Prévenir le joueur quand il reste N parties" },
   // ── Fidélisation ─────────────────────────────────────────────────────
   { key: "engagement.onboardingEnabled", category: "engagement", type: "boolean", default: true, label: "Parcours de bienvenue (premiers pas) sur l'accueil" },
@@ -567,8 +614,8 @@ export const SETTING_DEFINITIONS = [
   { key: "analytics.experiments", category: "analytics", type: "json", default: DEFAULT_EXPERIMENTS, label: "Tests A/B", description: "Liste [{id, enabled, variants, description}]. Expériences branchées : premium_hero (A/B), install_prompt (banner/card)." },
   { key: "ads.enabled", category: "ads", type: "boolean", default: true, label: "Publicité active" },
   { key: "ads.clientId", category: "ads", type: "string", default: "", maxLength: 40, pattern: "^ca-pub-[0-9]{10,20}$", placeholder: "ca-pub-0000000000000000", label: "Identifiant éditeur AdSense", description: "Format ca-pub-XXXXXXXXXXXXXXXX. Vide = espaces réservés affichés sans annonce." },
-  { key: "ads.slots", category: "ads", type: "json", default: { home: "", play: "", tournaments: "", tournament: "", leaderboard: "", clubs: "", wallet: "" }, label: "Identifiants des blocs d'annonces", description: "Un identifiant AdSense (data-ad-slot) par emplacement." },
-  { key: "ads.placements", category: "ads", type: "json", default: ["home", "play", "tournaments", "tournament", "leaderboard", "clubs", "wallet"], label: "Emplacements actifs" },
+  { key: "ads.slots", category: "ads", type: "json", default: { home: "", play: "", tournaments: "", tournament: "", leaderboard: "", clubs: "", wallet: "", ai_trial: "" }, label: "Identifiants des blocs d'annonces", description: "Un identifiant AdSense (data-ad-slot) par emplacement." },
+  { key: "ads.placements", category: "ads", type: "json", default: ["home", "play", "tournaments", "tournament", "leaderboard", "clubs", "wallet", "ai_trial"], label: "Emplacements actifs" },
   { key: "ads.showPlaceholder", category: "ads", type: "boolean", default: true, label: "Afficher l'espace réservé tant qu'AdSense n'est pas configuré" },
 
   { key: "clubs.enabled", category: "clubs", type: "boolean", default: true, label: "Clubs actifs" },
@@ -592,6 +639,7 @@ export type SettingValue<K extends SettingKey> =
   : K extends "premium.tiers" ? PremiumTier[]
   : K extends "rating.levels" ? typeof DEFAULT_RATING_LEVELS
   : K extends "money.stakePresets" ? number[]
+  : K extends "donations.amounts" ? number[]
   : K extends "ads.slots" ? Record<string, string>
   : K extends "ads.placements" ? string[]
   : K extends "community.disabledNotificationTypes" ? string[]
@@ -685,6 +733,11 @@ function validateJsonSetting(
       if (typeof tier.name !== "string" || !tier.name.trim()) return { ok: false, error: `Niveau ${tier.level} : nom requis.` };
       if (typeof tier.priceCfa !== "number" || tier.priceCfa < 0) return { ok: false, error: `Niveau ${tier.level} : tarif invalide.` };
       if (typeof tier.privileges !== "object" || tier.privileges === null) return { ok: false, error: `Niveau ${tier.level} : privilèges requis.` };
+      if (!Number.isInteger(tier.priceCfa)) return { ok: false, error: `Niveau ${tier.level} : tarif entier attendu (FCFA).` };
+      if (tier.level > 0 && (!Number.isInteger(tier.durationDays) || tier.durationDays < 1 || tier.durationDays > 3660)) {
+        return { ok: false, error: `Niveau ${tier.level} : durée entre 1 et 3660 jours.` };
+      }
+      if (tier.available !== undefined && typeof tier.available !== "boolean") return { ok: false, error: `Niveau ${tier.level} : « available » doit valoir true ou false.` };
     }
     if (!levels.has(0)) return { ok: false, error: "Le niveau 0 (gratuit) est obligatoire." };
     return { ok: true, value };
@@ -704,6 +757,12 @@ function validateJsonSetting(
       return { ok: false, error: `Emplacements autorisés : ${AD_PLACEMENTS.map((p) => p.id).join(", ")}.` };
     }
     return { ok: true, value };
+  }
+  if (key === "donations.amounts") {
+    if (!Array.isArray(value) || value.length === 0 || value.length > 8 || !value.every((v) => Number.isInteger(v) && v > 0 && v <= 10_000_000)) {
+      return { ok: false, error: "Entre 1 et 8 montants entiers positifs." };
+    }
+    return { ok: true, value: [...new Set(value as number[])].sort((a, b) => a - b) };
   }
   if (key === "money.stakePresets") {
     if (!Array.isArray(value) || !value.every((v) => Number.isInteger(v) && v > 0)) {

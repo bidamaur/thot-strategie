@@ -25,12 +25,15 @@ export const NOTIFICATION_TYPES = {
   MODERATION: "Décisions de modération",
   GAME_EXIT_REQUEST: "Demande de quitter ma partie en cours",
   GAME_EXIT_ANSWER: "Réponse à mes demandes de sortie de partie",
+  PAYMENT: "Suivi de mes paiements et de mon abonnement Premium",
+  PREMIUM_LAUNCH: "Ouverture des offres Premium (liste d’attente)",
+  AI_TRIAL: "Partie offerte du jour contre l’IA niveau 5",
 } as const;
 
 export type NotificationType = keyof typeof NOTIFICATION_TYPES;
 
 /** Types que le joueur ne peut pas couper (sécurité, sanctions). */
-const MANDATORY: NotificationType[] = ["MODERATION"];
+const MANDATORY: NotificationType[] = ["MODERATION", "PAYMENT"];
 
 export interface NotifyInput {
   userId: string;

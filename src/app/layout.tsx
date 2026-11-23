@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AppExperience } from "@/components/app/app-experience";
+import { CheckoutHost } from "@/components/monetization/checkout-host";
 import { BoardPrefsBoot } from "@/components/board/board-prefs-boot";
 import { BOARD_PREFS_BOOT_SCRIPT } from "@/lib/board-prefs";
 import { ActiveMatchBanner } from "@/components/match/active-match-banner";
@@ -64,6 +65,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         {children}
         <ActiveMatchBanner />
         <AppExperience />
+        <CheckoutHost />
         <BoardPrefsBoot />
       </body>
     </html>

@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { getSetting } from "@/lib/settings/service";
+import { getSetting, peekSetting } from "@/lib/settings/service";
 import { DEFAULT_PREMIUM_TIERS, type PremiumPrivileges, type PremiumTier } from "@/lib/settings/registry";
 
 /**
@@ -73,14 +73,31 @@ export async function getPrivileges(user: PremiumSubject): Promise<{
     tier,
     // Les privilèges ajoutés après coup (communauté…) prennent la valeur par défaut du niveau
     // tant que l'administrateur ne les a pas renseignés dans `premium.tiers`.
-    privileges: user.isAdmin
-      ? ADMIN_PRIVILEGES
-      : {
-          ...tierFor(DEFAULT_PREMIUM_TIERS, tier.level).privileges,
-          ...tierFor(tiers, 0).privileges,
-          ...tier.privileges,
-        },
+    privileges: user.isAdmin ? ADMIN_PRIVILEGES : resolvedPrivileges(tier),
   };
+}
+
+/**
+ * Privilèges complets d'un niveau : ceux renseignés par l'administrateur, et
+ * pour les privilèges ajoutés après coup, la valeur par défaut du même niveau.
+ * Règle unique, utilisée à la fois pour appliquer les droits et pour les
+ * afficher sur la page Premium (l'affichage ne peut plus diverger de la réalité).
+ */
+export function resolvedPrivileges(tier: PremiumTier): PremiumPrivileges {
+  return { ...tierFor(DEFAULT_PREMIUM_TIERS, tier.level).privileges, ...tier.privileges };
+}
+
+/**
+ * Niveau à afficher sous forme de badge (couronne) : 0 si l'abonnement est
+ * expiré ou si le niveau n'inclut pas le privilège « badge ». Lecture
+ * synchrone depuis le cache des paramètres.
+ */
+export function badgeLevel(user: PremiumSubject, now = new Date()): number {
+  if (user.isAdmin) return 0;
+  const level = effectiveLevel(user, now);
+  if (level <= 0) return 0;
+  const tier = tierFor(peekSetting("premium.tiers"), level);
+  return resolvedPrivileges(tier).badge ? level : 0;
 }
 
 export async function getPrivilegesForUserId(userId: string) {

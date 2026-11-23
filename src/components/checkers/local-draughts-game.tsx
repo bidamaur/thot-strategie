@@ -33,6 +33,10 @@ import { useBoardTouchGuard } from "@/components/games/use-board-touch-guard";
 
 interface LocalDraughtsGameProps {
   initialDifficulty: Difficulty;
+  /** Niveau maximal accessible (offre gratuite : 3, Premium : 5). */
+  maxLevel?: Difficulty;
+  /** Partie offerte du jour contre le niveau 5 (une seule partie). */
+  trial?: boolean;
   initialVariant: DraughtsVariant;
   /** Qui joue le premier coup (choisi au lancement de l'entraînement). */
   firstPlayer: FirstPlayer;
@@ -99,6 +103,8 @@ function getPieceLabel(
 
 export function LocalDraughtsGame({
   initialDifficulty,
+  maxLevel = 5,
+  trial = false,
   initialVariant,
   firstPlayer,
 }: LocalDraughtsGameProps) {
@@ -245,7 +251,14 @@ export function LocalDraughtsGame({
     }
   }
 
+  // Essai offert : une seule partie au niveau 5 ; la suivante repasse au niveau autorisé.
+  const [trialActive, setTrialActive] = useState(trial);
+
   function startNewGame() {
+    if (trialActive) {
+      setTrialActive(false);
+      setDifficulty((d) => (d > maxLevel ? maxLevel : d));
+    }
     setPosition(createDraughtsPosition(initialVariant));
     setHistory([]);
     setLastMove(null);
@@ -464,6 +477,8 @@ export function LocalDraughtsGame({
                   value={difficulty}
                   onChange={setDifficulty}
                   disabled={history.length > 0}
+                  maxLevel={maxLevel}
+                  unlocked={trialActive ? 5 : null}
                 />
               </section>
 

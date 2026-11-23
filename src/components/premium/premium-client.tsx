@@ -4,6 +4,8 @@ import { BarChart3, Check, Crown, Infinity as InfinityIcon, Minus, ShieldCheck, 
 import Link from "next/link";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { PageShell } from "@/components/ui/page-header";
+import { MyPayments } from "@/components/monetization/my-payments";
+import { openPremiumGate } from "@/lib/client/premium-gate";
 import { configureTelemetry, track, variantOf } from "@/lib/client/telemetry";
 import type { PremiumPrivileges, PremiumTier } from "@/lib/settings/registry";
 
@@ -84,13 +86,12 @@ function recommendedLevel(tiers: PremiumTier[]) {
   return tiers.find((t) => t.level > 0 && t.privileges.clubChampionships)?.level ?? tiers.find((t) => t.level > 0)?.level ?? null;
 }
 
+type ShownTier = PremiumTier & { available: boolean };
+
 export function PremiumClient() {
-  const [tiers, setTiers] = useState<PremiumTier[]>([]);
+  const [tiers, setTiers] = useState<ShownTier[]>([]);
   const [me, setMe] = useState<{ level: number; tierName: string; expiresAt: string | null } | null>(null);
   const [dailyGames, setDailyGames] = useState<number | null>(null);
-  const [purchase, setPurchase] = useState<{ available: boolean; simulated: boolean }>({ available: false, simulated: true });
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState<number | null>(null);
   const [variant, setVariant] = useState<"A" | "B">("A");
   const viewed = useRef(false);
 
@@ -101,7 +102,6 @@ export function PremiumClient() {
         setTiers(json.tiers ?? []);
         setMe(json.me ?? null);
         setDailyGames(json.freePlan?.dailyGames ?? null);
-        setPurchase(json.purchase ?? { available: false, simulated: true });
       });
 
   useEffect(() => {
@@ -122,23 +122,10 @@ export function PremiumClient() {
       .catch(() => undefined);
   }, []);
 
-  async function activate(level: number) {
+  /** Choix d'un niveau : fenêtre de paiement Mobile Money (Cameroun) ou de lancement (autres pays). */
+  function choose(level: number) {
     track("premium_cta_click", { level }, { id: "premium_hero", variant: variantOf("premium_hero") });
-    if (!purchase.available) {
-      setMessage("Le paiement en ligne n’est pas encore ouvert. Vous serez prévenu dès son ouverture.");
-      return;
-    }
-    setBusy(level);
-    setMessage("");
-    const response = await fetch("/api/premium/activate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ level }),
-    });
-    const json = await response.json().catch(() => ({}));
-    setBusy(null);
-    setMessage(response.ok ? `Niveau ${json.payment?.name ?? level} activé (paiement simulé).` : json.error ?? "Activation impossible.");
-    if (response.ok) void load();
+    openPremiumGate("PREMIUM_OFFER", level);
   }
 
   const groups = [...new Set(ROWS.map((r) => r.group))];
@@ -172,8 +159,6 @@ export function PremiumClient() {
         ))}
       </section>
 
-      {message && <p role="status" className="rounded-xl border border-line bg-surface-2 px-4 py-3 text-sm text-ink-soft">{message}</p>}
-
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {tiers.map((tier) => {
           const current = me?.level === tier.level;
@@ -183,7 +168,10 @@ export function PremiumClient() {
             <article key={tier.level} className={`card relative flex flex-col p-5 ${highlight ? "ring-1 ring-gold/50" : current ? "ring-1 ring-accent/50" : ""}`}>
               {highlight && <span className="absolute -top-2.5 left-5 rounded-full bg-gold px-2.5 py-0.5 text-[11px] font-semibold text-accent-ink">Recommandé</span>}
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold">{tier.name}</h2>
+                <h2 className="text-lg font-semibold">
+                  {tier.level > 0 && <span className="mr-1.5 align-middle text-xs font-semibold text-gold">P{tier.level}</span>}
+                  {tier.name}
+                </h2>
                 {current && <span className="chip chip-rated">Actuel</span>}
               </div>
               <p className="mt-1 text-sm text-ink-muted">{tier.tagline}</p>
@@ -203,10 +191,20 @@ export function PremiumClient() {
                 {(p.privateRooms ?? 0) > 0 && <li className="flex gap-2"><Check size={15} className="mt-0.5 shrink-0 text-accent" />{p.privateRooms} salon(s) privé(s)</li>}
                 {p.adFree && <li className="flex gap-2"><Check size={15} className="mt-0.5 shrink-0 text-accent" />Sans publicité</li>}
               </ul>
+              {tier.level > 0 && current && tier.available && (
+                <div className="mt-auto pt-5">
+                  <button type="button" onClick={() => choose(tier.level)} className="btn btn-ghost w-full border border-line-strong">Prolonger {tier.name}</button>
+                </div>
+              )}
               {tier.level > 0 && !current && (
                 <div className="mt-auto pt-5">
-                  <button type="button" onClick={() => void activate(tier.level)} disabled={busy !== null} className={`btn w-full ${highlight ? "btn-primary" : "btn-ghost border border-line-strong"}`}>
-                    {busy === tier.level ? "Activation…" : purchase.available ? `Choisir ${tier.name}` : `${tier.name} : bientôt disponible`}
+                  <button
+                    type="button"
+                    onClick={() => choose(tier.level)}
+                    disabled={!tier.available || (me?.level ?? 0) > tier.level}
+                    className={`btn w-full ${highlight ? "btn-primary" : "btn-ghost border border-line-strong"}`}
+                  >
+                    {!tier.available ? "Bientôt disponible" : (me?.level ?? 0) > tier.level ? "Inclus dans votre niveau" : `Choisir ${tier.name}`}
                   </button>
                 </div>
               )}
@@ -253,15 +251,19 @@ export function PremiumClient() {
         </section>
       )}
 
+      <MyPayments purpose="PREMIUM" title="Mes paiements Premium" />
+
       <section className="card space-y-3 p-5 text-sm leading-6 text-ink-soft">
         <h2 className="text-base font-semibold text-ink">Conditions, en clair</h2>
         <ul className="list-disc space-y-1.5 pl-5">
           <li><strong className="text-ink">Paiement unique</strong> pour la durée indiquée : <strong className="text-ink">aucun renouvellement automatique</strong>, aucun prélèvement sans votre action.</li>
+          <li>Au Cameroun, le paiement se fait par <strong className="text-ink">Orange Money</strong> ou <strong className="text-ink">MTN Mobile Money</strong>. Après votre transfert, vous déclarez la référence du SMS : l’abonnement est activé dès que l’administration a vérifié la réception du paiement.</li>
+          <li>Renouveler le même niveau prolonge l’abonnement à partir de sa date d’échéance.</li>
           <li>À l’échéance, votre compte repasse simplement à l’offre gratuite : vos parties, votre classement, vos clubs et vos amis sont conservés.</li>
-          <li>Passer à un niveau supérieur remplace le niveau en cours à partir du jour de l’achat.</li>
+          <li>Passer à un niveau supérieur remplace le niveau en cours à partir du jour de la validation du paiement.</li>
           <li>Le Premium ne donne <strong className="text-ink">aucun avantage de jeu</strong> : même matchmaking, même calcul ELO, mêmes règles et mêmes gains pour tous.</li>
           <li>Les points classiques, le classement ELO et les points argent restent strictement séparés : le Premium ne s’achète pas avec des points et n’en donne pas.</li>
-          {!purchase.available && <li>Le paiement en ligne n’est pas encore ouvert : les tarifs sont affichés à titre d’information.</li>}
+          <li>Hors du Cameroun, les paiements internationaux ouvriront prochainement : vous pouvez demander à être prévenu.</li>
         </ul>
       </section>
     </PageShell>

@@ -1,13 +1,8 @@
 import { LocalChessGame } from "@/components/chess/local-chess-game";
+import { AiLevelLocked, AiTrialGate } from "@/components/games/ai-level-gate";
 import { Suspense } from "react";
-import { parseFirstPlayer, type Difficulty } from "@/lib/engine/game-settings";
-
-const DIFFICULTY_VALUES = new Set<Difficulty>([
-  "simple",
-  "moyen",
-  "expert",
-  "pro",
-]);
+import { decideAiPage } from "@/lib/ai-training/page-access";
+import { parseDifficulty, parseFirstPlayer } from "@/lib/engine/game-settings";
 
 interface ChessGamePageProps {
   searchParams: Promise<{ difficulty?: string; first?: string }>;
@@ -31,9 +26,23 @@ export default async function ChessGamePage({
 
 async function ChessGame({ searchParams }: ChessGamePageProps) {
   const { difficulty, first } = await searchParams;
-  const selectedDifficulty = DIFFICULTY_VALUES.has(difficulty as Difficulty)
-    ? (difficulty as Difficulty)
-    : "moyen";
-
-  return <LocalChessGame initialDifficulty={selectedDifficulty} firstPlayer={parseFirstPlayer(first)} />;
+  const level = parseDifficulty(difficulty);
+  // Accès au niveau vérifié par le serveur (Premium, essai offert du jour).
+  const decision = await decideAiPage(level);
+  if (decision.kind === "locked") {
+    return (
+      <main className="flex min-h-[70dvh] items-center px-4 py-10">
+        <AiLevelLocked level={level} reason={decision.reason} maxLevel={decision.maxLevel} />
+      </main>
+    );
+  }
+  const game = (
+    <LocalChessGame
+      initialDifficulty={level}
+      firstPlayer={parseFirstPlayer(first)}
+      maxLevel={decision.maxLevel}
+      trial={decision.kind === "trial"}
+    />
+  );
+  return decision.kind === "trial" ? <AiTrialGate gameType="CHESS">{game}</AiTrialGate> : game;
 }

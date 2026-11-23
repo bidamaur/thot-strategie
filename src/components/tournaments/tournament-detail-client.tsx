@@ -2,6 +2,7 @@
 
 import { AdSlot } from "@/components/ads/ad-slot";
 import { ArrowLeft, Crown, Flag, Gavel, Play, RefreshCw, Share2, Swords, Trophy, UserPlus } from "lucide-react";
+import { TournamentAvailability } from "@/components/availability/tournament-availability";
 import { InviteFriendsDialog } from "@/components/community/dialogs";
 import { busyPlayersFrom, PlayerBusyPanel, type BusyPlayer } from "@/components/match/player-busy-panel";
 import Link from "next/link";
@@ -359,6 +360,10 @@ export function TournamentDetailClient({ tournamentId }: { tournamentId: string 
             </span>
           )}
         </EmptyState>
+      )}
+
+      {(tournament.status === "OPEN" || tournament.status === "DRAFT") && viewer && (viewer.isParticipant || viewer.isOrganizer || viewer.isAdmin) && (
+        <TournamentAvailability tournamentId={tournament.id} isOrganizer={viewer.isOrganizer} />
       )}
 
       {data.format === "ARENA" && tournament.status !== "OPEN" && data.arena && (

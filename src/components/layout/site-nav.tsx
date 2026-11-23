@@ -3,9 +3,11 @@
 import {
   BarChart3,
   Bot,
+  CalendarClock,
   Crown,
   Download,
   Gamepad2,
+  Heart,
   Home,
   LogOut,
   Medal,
@@ -22,6 +24,7 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { openDonation } from "@/lib/client/premium-gate";
 import { NotificationBell } from "./notification-bell";
 
 interface NavUser {
@@ -123,6 +126,18 @@ export function SiteNav() {
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
+            {!inGameRoom && (
+              <button
+                type="button"
+                onClick={openDonation}
+                className="btn btn-ghost hidden min-h-0 border border-danger/25 px-2.5 py-1.5 text-xs text-ink-soft hover:text-ink sm:inline-flex"
+                title="Soutenir la plateforme"
+              >
+                <Heart size={14} className="text-danger" aria-hidden />
+                <span className="hidden xl:inline">Soutenir la plateforme</span>
+                <span className="xl:hidden">Soutenir</span>
+              </button>
+            )}
             {user ? (
               <>
                 <span className="hidden items-center gap-3 rounded-lg border border-line px-3 py-1 text-xs sm:flex">
@@ -132,6 +147,9 @@ export function SiteNav() {
                   <span className="tabular text-ink-muted">{Math.round(user.pointsFree)} pts</span>
                 </span>
                 <NotificationBell paused={inGameRoom} />
+                <Link href="/disponibilites" className="btn btn-ghost hidden min-h-0 px-2.5 py-1.5 lg:inline-flex" aria-label="Mes disponibilités" title="Mes disponibilités">
+                  <CalendarClock size={15} />
+                </Link>
                 <Link href="/parametres" className="btn btn-ghost hidden min-h-0 px-2.5 py-1.5 lg:inline-flex" aria-label="Paramètres de jeu" title="Paramètres de jeu">
                   <Settings2 size={15} />
                 </Link>
@@ -231,6 +249,30 @@ export function SiteNav() {
                 <Settings2 size={20} />
                 Paramètres
               </Link>
+              {user && (
+                <Link
+                  href="/disponibilites"
+                  role="menuitem"
+                  className={`flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl border text-xs ${
+                    isActive(pathname, "/disponibilites") ? "border-accent/40 bg-accent/10 text-accent" : "border-line bg-surface-2 text-ink-soft"
+                  }`}
+                >
+                  <CalendarClock size={20} />
+                  Disponibilités
+                </Link>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMoreOpen(false);
+                  openDonation();
+                }}
+                className="flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-2xl border border-danger/25 bg-danger/[0.06] text-xs text-ink-soft"
+              >
+                <Heart size={20} className="text-danger" />
+                Soutenir ❤️
+              </button>
               <button
                 type="button"
                 role="menuitem"

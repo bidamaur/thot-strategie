@@ -21,7 +21,7 @@ describe("entraînement : qui commence", () => {
 
   it("l'IA d'échecs sait jouer le premier coup avec les blancs", () => {
     const game = new Chess();
-    const move = chooseComputerMove(game.fen(), "simple");
+    const move = chooseComputerMove(game.fen(), 1);
     expect(move).not.toBeNull();
     expect(game.move({ from: move!.from, to: move!.to })).toBeTruthy();
     expect(game.turn()).toBe("b");
@@ -32,7 +32,7 @@ describe("entraînement : qui commence", () => {
     const setup = new Chess();
     for (const san of ["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6"]) setup.move(san);
     const fen = setup.fen();
-    const move = chooseComputerMove(fen, "moyen");
+    const move = chooseComputerMove(fen, 3);
     const game = new Chess(fen);
     game.move({ from: move!.from, to: move!.to, promotion: move!.promotion });
     expect(game.isCheckmate()).toBe(true);
@@ -41,7 +41,7 @@ describe("entraînement : qui commence", () => {
   it("l'IA de dames sait jouer le premier coup (les deux variantes)", () => {
     for (const variant of ["ENGLISH", "INTERNATIONAL"] as const) {
       const start = createDraughtsPosition(variant);
-      const move = chooseDraughtsMove(start, "simple");
+      const move = chooseDraughtsMove(start, 1);
       expect(move).not.toBeNull();
       const legal = getLegalDraughtsMoves(start);
       expect(legal.some((m) => JSON.stringify(m) === JSON.stringify(move))).toBe(true);
@@ -52,7 +52,7 @@ describe("entraînement : qui commence", () => {
   it("l'IA de dames continue de jouer les noirs normalement", () => {
     const start = createDraughtsPosition("INTERNATIONAL");
     const afterWhite = applyDraughtsMove(start, getLegalDraughtsMoves(start)[0]);
-    const move = chooseDraughtsMove(afterWhite, "simple");
+    const move = chooseDraughtsMove(afterWhite, 1);
     expect(move).not.toBeNull();
     expect(afterWhite.board[move!.from.row][move!.from.col]?.color).toBe("b");
   });

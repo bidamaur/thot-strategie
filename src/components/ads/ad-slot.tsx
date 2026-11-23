@@ -57,10 +57,13 @@ export function AdSlot({
   placement,
   format = "banner",
   className = "",
+  reserve = false,
 }: {
   placement: AdPlacement;
   format?: keyof typeof HEIGHTS;
   className?: string;
+  /** Espace toujours visible (publicité exigée avant une récompense) : réservé même si l'emplacement est inactif. */
+  reserve?: boolean;
 }) {
   const pathname = usePathname() ?? "";
   const [config, setConfig] = useState<AdConfig | null>(null);
@@ -81,7 +84,7 @@ export function AdSlot({
   }, [forbidden]);
 
   const slot = config?.slots[placement] ?? "";
-  const live = Boolean(config?.clientId && slot);
+  const live = Boolean(config?.enabled && config.clientId && slot && config.placements.includes(placement));
 
   useEffect(() => {
     if (!live || !config?.clientId || pushed.current || !insRef.current) return;
@@ -94,10 +97,9 @@ export function AdSlot({
     }
   }, [live, config?.clientId]);
 
-  if (forbidden || !config || !config.enabled || config.hidden || !config.placements.includes(placement)) {
-    return null;
-  }
-  if (!live && !config.showPlaceholder) return null;
+  if (forbidden || !config || config.hidden) return null;
+  if (!reserve && (!config.enabled || !config.placements.includes(placement))) return null;
+  if (!live && !config.showPlaceholder && !reserve) return null;
 
   return (
     <aside aria-label="Publicité" className={`w-full ${className}`}>

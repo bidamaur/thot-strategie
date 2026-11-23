@@ -33,10 +33,12 @@ import {
   Menu,
   X,
   ScrollText,
+  Wallet,
 } from "lucide-react";
 import { AdminAuditView, AdminSettingsPanel } from "./admin-settings-panel";
 import { AdminAnalytics } from "./admin-analytics";
 import { AdminCommunity } from "./admin-community";
+import { AdminMonetization } from "./admin-monetization";
 
 interface AdminUser {
   id: string;
@@ -87,10 +89,13 @@ interface AdminConfig {
   updatedAt: string;
 }
 
-type View = "dashboard" | "analytics" | "users" | "tournaments" | "community" | "config" | "audit";
+type View = "dashboard" | "analytics" | "monetization" | "users" | "tournaments" | "community" | "config" | "audit";
 
-export default function AdminDashboard({ adminUser }: { adminUser: any }) {
-  const [view, setView] = useState<View>("dashboard");
+const VIEWS: View[] = ["dashboard", "analytics", "monetization", "users", "tournaments", "community", "config", "audit"];
+
+export default function AdminDashboard({ adminUser, initialView }: { adminUser: any; initialView?: string }) {
+  // Vue initiale lisible dans l'adresse (?view=monetization), utilisée par les notifications.
+  const [view, setView] = useState<View>(VIEWS.includes(initialView as View) ? (initialView as View) : "dashboard");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [tournaments, setTournaments] = useState<AdminTournament[]>([]);
@@ -165,6 +170,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
   const navItems = [
     { id: "dashboard", label: "Tableau de bord", icon: LayoutDashboard },
     { id: "analytics", label: "Audience et conversion", icon: LayoutDashboard },
+    { id: "monetization", label: "Monétisation", icon: Wallet },
     { id: "users", label: "Utilisateurs", icon: Users },
     { id: "tournaments", label: "Tournois", icon: Trophy },
     { id: "community", label: "Communauté", icon: Globe },
@@ -327,6 +333,7 @@ export default function AdminDashboard({ adminUser }: { adminUser: any }) {
           {view === "audit" && <AdminAuditView />}
           {view === "community" && <AdminCommunity />}
           {view === "analytics" && <AdminAnalytics />}
+          {view === "monetization" && <AdminMonetization />}
           {view === "config" && <AdminSettingsPanel />}
           {view === "config" && (
             <details className="mt-10">

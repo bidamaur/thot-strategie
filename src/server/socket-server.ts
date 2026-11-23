@@ -1293,6 +1293,8 @@ export function attachSocketServer(httpServer: HttpServer): Server {
            movesHistory: [],
            status: MatchStatus.IN_PROGRESS,
            timeControlMinutes: match.timeControlMinutes,
+           // Même affront : la série de revanches permet d'afficher le score de la session.
+           rematchOfId: matchId,
          },
         select: { id: true },
         });

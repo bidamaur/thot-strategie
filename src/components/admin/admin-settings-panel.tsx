@@ -29,10 +29,10 @@ type Categories = Record<SettingCategory, { label: string; description: string }
  * Panneau de paramétrage centralisé : toutes les règles métier de la
  * plateforme, validées côté serveur et tracées dans le journal d'audit.
  */
-export function AdminSettingsPanel() {
+export function AdminSettingsPanel({ only, title }: { only?: SettingCategory[]; title?: string } = {}) {
   const [settings, setSettings] = useState<SettingRow[]>([]);
   const [categories, setCategories] = useState<Categories | null>(null);
-  const [active, setActive] = useState<SettingCategory>("points");
+  const [active, setActive] = useState<SettingCategory>(only?.[0] ?? "points");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<Record<string, { ok: boolean; text: string }>>({});
   const [filter, setFilter] = useState("");
@@ -57,9 +57,11 @@ export function AdminSettingsPanel() {
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase();
     return settings.filter((s) =>
-      q ? `${s.label} ${s.key} ${s.description ?? ""}`.toLowerCase().includes(q) : s.category === active,
+      only && !only.includes(s.category)
+        ? false
+        : q ? `${s.label} ${s.key} ${s.description ?? ""}`.toLowerCase().includes(q) : s.category === active,
     );
-  }, [settings, active, filter]);
+  }, [settings, active, filter, only]);
 
   const draftOf = (row: SettingRow) =>
     drafts[row.key] ?? (row.type === "json" ? JSON.stringify(row.value, null, 2) : String(row.value));
@@ -105,7 +107,7 @@ export function AdminSettingsPanel() {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-semibold">Paramètres de la plateforme</h2>
+        <h2 className="text-xl font-semibold">{title ?? "Paramètres de la plateforme"}</h2>
         <p className="mt-1 text-sm text-ink-muted">
           Toutes les règles métier sont modifiables ici. Chaque changement est validé, tracé dans le journal d’audit et
           appliqué en quelques secondes. Les tournois déjà lancés conservent leurs règles figées.
@@ -114,7 +116,7 @@ export function AdminSettingsPanel() {
 
       <div className="flex flex-col gap-3 lg:flex-row">
         <nav className="flex gap-1 overflow-x-auto lg:w-56 lg:shrink-0 lg:flex-col" aria-label="Catégories">
-          {(Object.keys(categories) as SettingCategory[]).map((id) => (
+          {(Object.keys(categories) as SettingCategory[]).filter((id) => !only || only.includes(id)).map((id) => (
             <button
               key={id}
               type="button"

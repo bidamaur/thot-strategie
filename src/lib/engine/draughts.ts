@@ -36,11 +36,12 @@ const DIRECTIONS = [
   [1, 1],
 ] as const;
 
-const SEARCH_SETTINGS: Record<Difficulty, { depth: number; nodes: number }> = {
-  simple: { depth: 1, nodes: 1_000 },
-  moyen: { depth: 4, nodes: 10_000 },
-  expert: { depth: 7, nodes: 60_000 },
-  pro: { depth: 10, nodes: 180_000 },
+export const SEARCH_SETTINGS: Record<Difficulty, { depth: number; nodes: number; blunder: number }> = {
+  1: { depth: 1, nodes: 1_000, blunder: 0.35 },
+  2: { depth: 2, nodes: 5_000, blunder: 0.12 },
+  3: { depth: 4, nodes: 20_000, blunder: 0 },
+  4: { depth: 7, nodes: 80_000, blunder: 0 },
+  5: { depth: 10, nodes: 250_000, blunder: 0 },
 };
 
 interface TableEntry {
@@ -435,6 +436,7 @@ function search(
 export function chooseDraughtsMove(
   position: DraughtsPosition,
   difficulty: Difficulty,
+  random: () => number = Math.random,
 ): DraughtsMove | null {
   // Évaluation du point de vue des blancs : les noirs minimisent, les blancs maximisent.
   const sign = position.turn === "b" ? 1 : -1;
@@ -443,6 +445,11 @@ export function chooseDraughtsMove(
   if (legalMoves.length === 0) return null;
 
   const settings = SEARCH_SETTINGS[difficulty];
+  // Niveaux faibles : coup volontairement aléatoire de temps en temps (toujours légal :
+  // la prise reste obligatoire, seule la prise choisie change).
+  if (settings.blunder > 0 && random() < settings.blunder) {
+    return legalMoves[Math.floor(random() * legalMoves.length)] ?? null;
+  }
   const state = {
     nodes: 0,
     maxNodes: settings.nodes,
@@ -486,7 +493,7 @@ export function chooseDraughtsMove(
     }
 
     if (completed && bestMoves.length > 0) {
-      completedBestMove = bestMoves[Math.floor(Math.random() * bestMoves.length)];
+      completedBestMove = bestMoves[Math.floor(random() * bestMoves.length)];
       previousBestMove = moveKey(completedBestMove);
     }
   }
